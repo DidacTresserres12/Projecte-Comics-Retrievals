@@ -10,7 +10,6 @@ def get_data(slice=1, train=True):
                                               train=train, 
                                               transform=transforms.ToTensor(),
                                               download=True)
-    #  equiv to slicing with [::slice] 
     sub_dataset = torch.utils.data.Subset(
       full_dataset, indices=range(0, len(full_dataset), slice))
     
@@ -24,19 +23,25 @@ def make_loader(dataset, batch_size):
                                          pin_memory=True, num_workers=2)
     return loader
 
-
 def make(config, device="cuda"):
-    # Make the data
-    train, test = get_data(train=True), get_data(train=False)
-    train_loader = make_loader(train, batch_size=config.batch_size)
-    test_loader = make_loader(test, batch_size=config.batch_size)
+    # Carregar Dataset
+    raw_dataset = load_dataset("VLR-CVC/ComicsPAP", "caption_relevance")
+    
+    # Instanciar Model per obtenir el tokenizer
+    model = Baseline().to(device)
+    tokenizer = model.bert_tokenizer
 
-    # Make the model
-    model = ConvNet(config.kernels, config.classes).to(device)
+    # Crear Datasets i Loaders
+    train_data = ComicsPAPDataset(raw_dataset['train'], tokenizer)
+    test_data = ComicsPAPDataset(raw_dataset['validation'], tokenizer)
 
-    # Make the loss and optimizer
+    train_loader = torch.utils.data.DataLoader(
+        dataset=train_data, batch_size=config.batch_size, shuffle=True, pin_memory=True)
+    test_loader = torch.utils.data.DataLoader(
+        dataset=test_data, batch_size=config.batch_size, shuffle=False, pin_memory=True)
+
+    # 4. Optimizador parametritzat des del config de pes i biaix
+    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(
-        model.parameters(), lr=config.learning_rate)
     
     return model, train_loader, test_loader, criterion, optimizer
