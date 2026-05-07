@@ -1,62 +1,56 @@
 import os
+import sys
 import random
-import wandb
-
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision
-import torchvision.transforms as transforms
-
-from train import *
-from test import *
-from utils.utils import *
+import wandb
+# Esto detecta la carpeta donde está main.py y la añade al buscador de Python
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+from utils.utils import make
+from train import train
 from tqdm.auto import tqdm
-
-# Ensure deterministic behavior
 torch.backends.cudnn.deterministic = True
-random.seed(hash("setting random seeds") % 2**32 - 1)
-np.random.seed(hash("improves reproducibility") % 2**32 - 1)
-torch.manual_seed(hash("by removing stochasticity") % 2**32 - 1)
-torch.cuda.manual_seed_all(hash("so runs are repeatable") % 2**32 - 1)
-
-# Device configuration
+random.seed(42)
+np.random.seed(42)
+torch.manual_seed(42)
+torch.cuda.manual_seed_all(42)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-# remove slow mirror from list of MNIST mirrors
-torchvision.datasets.MNIST.mirrors = [mirror for mirror in torchvision.datasets.MNIST.mirrors
-                                      if not mirror.startswith("http://yann.lecun.com")]
-
-
-
-
-def model_pipeline(cfg:dict) -> None:
-    # tell wandb to get started
-    with wandb.init(project="pytorch-demo", config=cfg):
-      # access all HPs through wandb.config, so logging matches execution!
-      config = wandb.config
-
-      # make the model, data, and optimization problem
-      model, train_loader, test_loader, criterion, optimizer = make(config,device=device)
-
-      # and use them to train the model
-      train(model, train_loader, criterion, optimizer, config,device=device)
-
-      # and test its final performance
-      test(model, test_loader,device=device)
+def model_pipeline(cfg: dict) -> None:
+    # Iniciamos el proyecto en Weights & Biases
+    with wandb.init(project="Comics-Retrieval-Final", config=cfg):
+        config = wandb.config
+        model, train_loader, test_loader, criterion, optimizer = make(config, device=device)
+        train(
+            model=model, 
+            loader=train_loader, 
+            val_loader=test_loader, 
+            criterion=criterion, 
+            optimizer=optimizer, 
+            config=config, 
+            device=device
+        )
+        
+        # Guardamos el resultado final
+        torch.save(model.state_dict(), "modelo_entrenado_comics.pth")
+        print("Entrenamiento finalizado y modelo guardado como 'modelo_entrenado_comics.pth'")
 
     return model
 
 if __name__ == "__main__":
     wandb.login()
 
+    # Parámetros del experimento
     config = dict(
-        epochs=5,
-        classes=10,
-        kernels=[16, 32],
-        batch_size=128,
-        learning_rate=5e-3,
-        dataset="MNIST",
-        architecture="CNN")
-    model = model_pipeline(config)
+        epochs=10,
+        batch_size=32,
+        learning_rate=2e-5,
+        dataset="ComicsPAP",
+        architecture="BERT-ResNet"
+    )
 
+    # Lanzamos el proceso
+    model = model_pipeline(config)

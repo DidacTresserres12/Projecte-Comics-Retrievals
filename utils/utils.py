@@ -1,9 +1,19 @@
 import wandb
 import torch
-import torch.nn 
+import torch.nn as nn 
 import torchvision
 import torchvision.transforms as transforms
+from datasets import load_dataset
+import os
+import sys
+# Calculamos la ruta de la carpeta raíz del proyecto
+root_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
+
 from models.models import *
+from datasets import load_dataset
+from dataloaders.dataset import ComicsPAPDataset
 
 def get_data(slice=1, train=True):
     full_dataset = torchvision.datasets.MNIST(root=".",
@@ -33,14 +43,14 @@ def make(config, device="cuda"):
 
     # Crear Datasets i Loaders
     train_data = ComicsPAPDataset(raw_dataset['train'], tokenizer)
-    test_data = ComicsPAPDataset(raw_dataset['validation'], tokenizer)
+    test_data = ComicsPAPDataset(raw_dataset['val'], tokenizer)
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_data, batch_size=config.batch_size, shuffle=True, pin_memory=True)
     test_loader = torch.utils.data.DataLoader(
         dataset=test_data, batch_size=config.batch_size, shuffle=False, pin_memory=True)
 
-    # 4. Optimizador parametritzat des del config de pes i biaix
+    # Optimizador parametritzat des del config de pes i biaix
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
     criterion = nn.CrossEntropyLoss()
     
