@@ -46,7 +46,7 @@ class ComicsPAPDataset(Dataset):
             image = self.transform(image)
         # 4. Tokenización
         encoding = self.tokenizer(
-            caption, # Ahora estamos seguros de que es un string
+            caption, # pasamos a string
             padding='max_length',
             truncation=True,
             max_length=self.max_length,

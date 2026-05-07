@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 from datasets import load_dataset
 import os
 import sys
+from pytorch_metric_learning import losses
 # Calculamos la ruta de la carpeta raíz del proyecto
 root_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if root_path not in sys.path:
@@ -50,8 +51,9 @@ def make(config, device="cuda"):
     test_loader = torch.utils.data.DataLoader(
         dataset=test_data, batch_size=config.batch_size, shuffle=False, pin_memory=True)
 
-    # Optimizador parametritzat des del config de pes i biaix
+    # Optimizador 
     optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
-    criterion = nn.CrossEntropyLoss()
+    
+    criterion = losses.MultiSimilarityLoss(alpha=2, beta=50, base=0.5)
     
     return model, train_loader, test_loader, criterion, optimizer

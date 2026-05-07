@@ -130,3 +130,6 @@ dmypy.json
 
 # Pycharm
 .idea/
+model_best.pth
+*.pth
+wandb/

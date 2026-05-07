@@ -33,10 +33,10 @@ def model_pipeline(cfg: dict) -> None:
             config=config, 
             device=device
         )
-        
-        # Guardamos el resultado final
-        torch.save(model.state_dict(), "modelo_entrenado_comics.pth")
-        print("Entrenamiento finalizado y modelo guardado como 'modelo_entrenado_comics.pth'")
+        # Guardamos el resultado final dentro de la carpeta del proyecto
+        save_path = os.path.join(script_dir, "modelo_entrenado_comics.pth")
+        torch.save(model.state_dict(), save_path)
+        print(f"Entrenamiento finalizado y modelo guardado en: {save_path}")
 
     return model
 

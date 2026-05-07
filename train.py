@@ -1,10 +1,10 @@
 from tqdm.auto import tqdm
 import wandb
 import torch
+import os
 
 def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"):
     wandb.watch(model, criterion, log="all", log_freq=10)
-
     example_ct = 0  
     batch_ct = 0
     best_r1 = 0.0
@@ -27,11 +27,10 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
         # Validación
         val_metrics = validate_retrieval(model, val_loader, device)
         
-        # Log de validación a wandb
         wandb.log({
             "epoch": epoch,
             "val/R@1": val_metrics["R@1"],
-            "val/R@5": val_metrics["R@5"]
+            "val/R@10": val_metrics["R@10"] 
         }, step=example_ct)
 
         # Guardado
@@ -45,18 +44,26 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
             }, is_best)
 
 def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cuda"):
-    # Forward pass
+    model.train()
     txt_emb, img_emb = model({'input_ids': input_ids, 'attention_mask': mask}, images)
     
-    # Similitud y pérdida
-    logits = torch.matmul(txt_emb, img_emb.t())
-    labels = torch.arange(logits.size(0)).to(device)
-    loss = criterion(logits, labels)
+    # Normalizamos 
+    txt_emb = torch.nn.functional.normalize(txt_emb, p=2, dim=1)
+    img_emb = torch.nn.functional.normalize(img_emb, p=2, dim=1)
+    
+    # Preparamos etiquetas para la librería
+    indices = torch.arange(txt_emb.size(0)).to(device)
+    
+    # Concatenamos para que la loss compare todo el batch
+    embeddings = torch.cat([txt_emb, img_emb], dim=0)
+    labels = torch.cat([indices, indices], dim=0)
+    
+    # Calculamos la Loss usando la nueva librería
+    loss = criterion(embeddings, labels)
     
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-
     return loss
 
 def train_log(loss, example_ct, epoch):
@@ -82,11 +89,13 @@ def validate_retrieval(model, loader, device):
     
     correct = torch.arange(len(txts)).to(device).view(-1, 1)
     r1 = (sim.topk(1, dim=1)[1] == correct).any(dim=1).float().mean().item()
-    r5 = (sim.topk(5, dim=1)[1] == correct).any(dim=1).float().mean().item()
-    
-    return {"R@1": r1, "R@5": r5}
+    r10 = (sim.topk(10, dim=1)[1] == correct).any(dim=1).float().mean().item() 
+    return {"R@1": r1, "R@10": r10}
 
 def save_checkpoint(state, is_best):
     if is_best:
-        torch.save(state, "model_best.pth")
-        print(f"Mejor modelo guardado (R@1: {state['best_r1']:.4f})")
+        # Guardar en la carpeta actual del script
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        path = os.path.join(current_dir, "model_best.pth")
+        torch.save(state, path)
+        print(f"Mejor modelo guardado en: {path} (R@1: {state['best_r1']:.4f})")
