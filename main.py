@@ -33,8 +33,7 @@ def model_pipeline(cfg: dict) -> None:
             config=config, 
             device=device
         )
-        # Guardamos el resultado final fuera de la carpeta del proyecto
-        # Se guarda en ../trained_models/ relativo a este script
+        # Guardamos el resultado final
         save_dir = os.path.abspath(os.path.join(script_dir, "..", "trained_models"))
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(save_dir, "modelo_entrenado_comics.pth")

@@ -94,7 +94,7 @@ def validate_retrieval(model, loader, device):
 
 def save_checkpoint(state, is_best):
     if is_best:
-        # Guardar fuera de la carpeta del proyecto (en el nivel superior)
+        # Guardamos el mejor modelo entrenado.
         current_dir = os.path.dirname(os.path.abspath(__file__))
         save_dir = os.path.abspath(os.path.join(current_dir, "..", "trained_models"))
         os.makedirs(save_dir, exist_ok=True)
