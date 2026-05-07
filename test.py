@@ -17,10 +17,16 @@ def test(model, test_loader, device="cuda", save:bool= True):
         wandb.log({"test_accuracy": correct / total})
 
     if save:
+        import os
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        save_dir = os.path.abspath(os.path.join(current_dir, "..", "trained_models"))
+        os.makedirs(save_dir, exist_ok=True)
+        onnx_path = os.path.join(save_dir, "model.onnx")
+        
         print(len(images))
         torch.onnx.export(model,  
                           images,  
-                          "model.onnx",  #on guardem
+                          onnx_path,  #on guardem
                           export_params=True, 
                           opset_version=10,  
                           do_constant_folding=True,  
@@ -28,4 +34,4 @@ def test(model, test_loader, device="cuda", save:bool= True):
                           output_names=['output'],  
                           dynamic_axes={'input': {0: 'batch_size'},  
                                         'output': {0: 'batch_size'}})
-        wandb.save("model.onnx")
+        wandb.save(onnx_path)

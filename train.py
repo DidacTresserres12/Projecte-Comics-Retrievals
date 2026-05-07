@@ -94,8 +94,10 @@ def validate_retrieval(model, loader, device):
 
 def save_checkpoint(state, is_best):
     if is_best:
-        # Guardar en la carpeta actual del script
+        # Guardar fuera de la carpeta del proyecto (en el nivel superior)
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        path = os.path.join(current_dir, "model_best.pth")
+        save_dir = os.path.abspath(os.path.join(current_dir, "..", "trained_models"))
+        os.makedirs(save_dir, exist_ok=True)
+        path = os.path.join(save_dir, "model_best.pth")
         torch.save(state, path)
         print(f"Mejor modelo guardado en: {path} (R@1: {state['best_r1']:.4f})")
