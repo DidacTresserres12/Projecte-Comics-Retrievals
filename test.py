@@ -1,37 +1,49 @@
 import wandb
 import torch
 
-def test(model, test_loader, device="cuda", save:bool= True):
+
+def test(model, test_loader, device="cuda"):
+    """
+    Evaluate the retrieval model on the test set.
+    Computes R@1, R@5 and R@10 (text-to-image retrieval).
+    Logs results to Weights & Biases.
+    """
+    model.eval()
+    all_txt, all_img = [], []
+
     with torch.no_grad():
-        correct, total = 0, 0
-        for images, labels in test_loader:
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+        for batch in test_loader:
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            images = batch['image'].to(device)
 
-        print(f"Accuracy of the model on the {total} " +
-              f"test images: {correct / total:%}")
-        
-        wandb.log({"test_accuracy": correct / total})
+            txt_emb, img_emb = model(
+                {'input_ids': input_ids, 'attention_mask': attention_mask},
+                images
+            )
+            all_txt.append(txt_emb)
+            all_img.append(img_emb)
 
-    if save:
-        import os
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        save_dir = os.path.abspath(os.path.join(current_dir, "..", "trained_models"))
-        os.makedirs(save_dir, exist_ok=True)
-        onnx_path = os.path.join(save_dir, "model.onnx")
-        
-        print(len(images))
-        torch.onnx.export(model,  
-                          images,  
-                          onnx_path,  #on guardem
-                          export_params=True, 
-                          opset_version=10,  
-                          do_constant_folding=True,  
-                          input_names=['input'],  
-                          output_names=['output'],  
-                          dynamic_axes={'input': {0: 'batch_size'},  
-                                        'output': {0: 'batch_size'}})
-        wandb.save(onnx_path)
+    txts = torch.cat(all_txt)   # [N, embedding_dim]
+    imgs = torch.cat(all_img)   # [N, embedding_dim]
+
+    # Similarity matrix [N, N]
+    sim = torch.matmul(txts, imgs.t())
+
+    ground_truth = torch.arange(len(txts), device=device).view(-1, 1)
+
+    r1  = (sim.topk(1,  dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
+    r5  = (sim.topk(5,  dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
+    r10 = (sim.topk(10, dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
+
+    print(f"Test R@1:  {r1:.4f}")
+    print(f"Test R@5:  {r5:.4f}")
+    print(f"Test R@10: {r10:.4f}")
+
+    wandb.log({
+        "test/R@1":  r1,
+        "test/R@5":  r5,
+        "test/R@10": r10,
+    })
+
+    return {"R@1": r1, "R@5": r5, "R@10": r10}
