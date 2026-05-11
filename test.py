@@ -1,21 +1,65 @@
-import wandb
+import os
+import sys
+import argparse
 import torch
+import torch.nn.functional as F
+import torchvision.transforms as T
+from PIL import Image
+import wandb
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+root_path = os.path.abspath(os.path.join(script_dir, ".."))
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
+
+from models.models import Baseline
 
 
-def test(model, test_loader, device="cuda"):
+# ─────────────────────────────────────────────
+# Càrrega del model
+# ─────────────────────────────────────────────
+def load_model(model_path, embedding_dim=512, device="cpu"):
     """
-    Evaluate the retrieval model on the test set.
-    Computes R@1, R@5 and R@10 (text-to-image retrieval).
-    Logs results to Weights & Biases.
+    Carrega un model Baseline entrenat prèviament des d'un fitxer .pth
+
+    Args:
+        model_path:    ruta al fitxer .pth
+        embedding_dim: dimensió de l'espai d'embedding (ha de coincidir amb l'entrenament)
+        device:        'cuda' o 'cpu'
+
+    Returns:
+        model en mode eval, llest per fer inferència
+    """
+    model = Baseline(embedding_dim=embedding_dim).to(device)
+    state_dict = torch.load(model_path, map_location=device)
+    model.load_state_dict(state_dict)
+    model.eval()
+    print(f"Model carregat des de: {model_path}")
+    return model
+
+
+# ─────────────────────────────────────────────
+# Avaluació completa del dataset (R@1, R@5, R@10)
+# ─────────────────────────────────────────────
+def test(model, test_loader, device="cuda", log_wandb=False):
+    """
+    Avalua el model sobre el conjunt de test.
+    Calcula R@1, R@5 i R@10 (text-to-image retrieval).
+
+    Args:
+        model:       model Baseline en mode eval
+        test_loader: DataLoader del conjunt de test
+        device:      dispositiu de càlcul
+        log_wandb:   si True, envia els resultats a Weights & Biases
     """
     model.eval()
     all_txt, all_img = [], []
 
     with torch.no_grad():
         for batch in test_loader:
-            input_ids = batch['input_ids'].to(device)
+            input_ids      = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
-            images = batch['image'].to(device)
+            images         = batch['image'].to(device)
 
             txt_emb, img_emb = model(
                 {'input_ids': input_ids, 'attention_mask': attention_mask},
@@ -27,7 +71,7 @@ def test(model, test_loader, device="cuda"):
     txts = torch.cat(all_txt)   # [N, embedding_dim]
     imgs = torch.cat(all_img)   # [N, embedding_dim]
 
-    # Similarity matrix [N, N]
+    # Matriu de similitud [N, N]
     sim = torch.matmul(txts, imgs.t())
 
     ground_truth = torch.arange(len(txts), device=device).view(-1, 1)
@@ -36,14 +80,125 @@ def test(model, test_loader, device="cuda"):
     r5  = (sim.topk(5,  dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
     r10 = (sim.topk(10, dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
 
-    print(f"Test R@1:  {r1:.4f}")
-    print(f"Test R@5:  {r5:.4f}")
-    print(f"Test R@10: {r10:.4f}")
+    print(f"\n{'='*40}")
+    print(f"  Test R@1  : {r1:.4f}")
+    print(f"  Test R@5  : {r5:.4f}")
+    print(f"  Test R@10 : {r10:.4f}")
+    print(f"{'='*40}\n")
 
-    wandb.log({
-        "test/R@1":  r1,
-        "test/R@5":  r5,
-        "test/R@10": r10,
-    })
+    if log_wandb:
+        wandb.log({"test/R@1": r1, "test/R@5": r5, "test/R@10": r10})
 
     return {"R@1": r1, "R@5": r5, "R@10": r10}
+
+
+# ─────────────────────────────────────────────
+# Mode demo: exemple individual
+# ─────────────────────────────────────────────
+def demo(model, image_path, texts, device="cpu"):
+    """
+    Donat una imatge i una llista de textos candidats,
+    mostra la similitud de cada text amb la imatge
+    i indica quin és el més similar.
+
+    Args:
+        model:      model Baseline en mode eval
+        image_path: ruta a la imatge (.jpg, .png, ...)
+        texts:      llista de strings candidats
+        device:     dispositiu de càlcul
+
+    Exemple d'ús:
+        demo(model, "panel.jpg", ["A hero fights", "A dog sleeps"])
+    """
+    # Preprocessat de la imatge
+    transform = T.Compose([
+        T.Resize((224, 224)),
+        T.ToTensor(),
+        T.Normalize(mean=[0.485, 0.456, 0.406],
+                    std=[0.229, 0.224, 0.225])
+    ])
+    image = Image.open(image_path).convert("RGB")
+    image_tensor = transform(image).unsqueeze(0).to(device)  # [1, 3, 224, 224]
+
+    # Preprocessat dels textos
+    encoding = model.bert_tokenizer(
+        texts,
+        padding="max_length",
+        truncation=True,
+        max_length=128,
+        return_tensors="pt"
+    )
+    text_features = {k: v.to(device) for k, v in encoding.items()}
+
+    # Inferència
+    model.eval()
+    with torch.no_grad():
+        txt_emb, img_emb = model(text_features, image_tensor.expand(len(texts), -1, -1, -1))
+
+    # Similituds (un valor per cada text candidat)
+    similarities = F.cosine_similarity(txt_emb, img_emb, dim=1)
+
+    print(f"\nImatge: {image_path}")
+    print(f"{'─'*50}")
+    for text, sim in zip(texts, similarities):
+        print(f"  [{sim:.4f}]  {text}")
+
+    best_idx = similarities.argmax().item()
+    print(f"{'─'*50}")
+    print(f"  ✓ Millor coincidència: \"{texts[best_idx]}\" (sim={similarities[best_idx]:.4f})\n")
+
+    return {text: sim.item() for text, sim in zip(texts, similarities)}
+
+
+# ─────────────────────────────────────────────
+# Punt d'entrada
+# ─────────────────────────────────────────────
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Test i demo del model Comics Retrieval")
+
+    parser.add_argument("--model_path",    type=str, required=True,
+                        help="Ruta al fitxer .pth del model entrenat")
+    parser.add_argument("--embedding_dim", type=int, default=512,
+                        help="Dimensió de l'embedding (per defecte: 512)")
+    parser.add_argument("--device",        type=str, default="cpu",
+                        choices=["cpu", "cuda"],
+                        help="Dispositiu de càlcul (per defecte: cpu)")
+
+    # Arguments per al mode demo
+    parser.add_argument("--image", type=str, default=None,
+                        help="[Demo] Ruta a la imatge d'exemple")
+    parser.add_argument("--texts", type=str, nargs="+", default=None,
+                        help="[Demo] Textos candidats separats per espai")
+
+    # Arguments per a l'avaluació completa
+    parser.add_argument("--eval", action="store_true",
+                        help="[Eval] Avalua sobre el dataset de test complet")
+    parser.add_argument("--wandb", action="store_true",
+                        help="[Eval] Envia els resultats a Weights & Biases")
+
+    args = parser.parse_args()
+
+    # Carreguem el model
+    model = load_model(args.model_path, args.embedding_dim, args.device)
+
+    # Mode demo
+    if args.image and args.texts:
+        demo(model, args.image, args.texts, device=args.device)
+
+    # Mode avaluació completa
+    if args.eval:
+        from datasets import load_dataset
+        from dataloaders.dataset import ComicsPAPDataset
+
+        raw_dataset = load_dataset("VLR-CVC/ComicsPAP", "caption_relevance")
+        test_data   = ComicsPAPDataset(raw_dataset['val'], model.bert_tokenizer)
+        test_loader = torch.utils.data.DataLoader(test_data, batch_size=32, shuffle=False)
+
+        if args.wandb:
+            wandb.init(project="Comics-Retrieval-Test")
+
+        test(model, test_loader, device=args.device, log_wandb=args.wandb)
+
+    if not args.image and not args.eval:
+        print("Indica --image + --texts per al mode demo, o --eval per avaluar el dataset complet.")
+        parser.print_help()
