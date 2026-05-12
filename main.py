@@ -25,41 +25,23 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Configuració del Sweep (exploració exhaustiva)
 # ─────────────────────────────────────────────
 sweep_config = {
-    "name": "comics-retrieval-sweep",
+    "name": "comics-retrieval-triplet-sweep",
     "method": "grid",   # prova TOTES les combinacions
-    "metric": {
-        "name": "val/R@1",
-        "goal": "maximize"
-    },
+    "metric": {"name": "val/R@1", "goal": "maximize"},
     "parameters": {
         # Hiperparàmetres d'optimització
-        "learning_rate": {
-            "values": [1e-4, 2e-5, 5e-5]
-        },
-        "batch_size": {
-            "values": [32, 64]
-        },
+        "learning_rate": {"values": [1e-4, 2e-5, 5e-5]},
+        "batch_size": {"values": [32, 64]},
         # Arquitectura del model
-        "embedding_dim": {
-            "values": [256, 512]
-        },
+        "embedding_dim": {"values": [512]},
+        "margin": {"values": [0.1, 0.2, 0.3]},
         # Congelació dels encoders
-        "freeze_bert": {
-            "values": [True, False]
-        },
-        "freeze_resnet": {
-            "values": [True, False]
-        },
+        "freeze_bert": {"values": True},
+        "freeze_resnet": {"values": True},
         # Fixos — no són hiperparàmetres a explorar
-        "epochs": {
-            "value": 10
-        },
-        "dataset": {
-            "value": "ComicsPAP"
-        },
-        "architecture": {
-            "value": "BERT-ResNet"
-        },
+        "epochs": {"value": 10},
+        "dataset": {"value": "ComicsPAP"},
+        "architecture": {"value": "BERT-ResNet"},
     }
 }
 

@@ -67,8 +67,8 @@ def make(config, device="cuda"):
         shuffle=False, pin_memory=True)
 
     # Optimitzador
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.learning_rate)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=0.01)
 
-    criterion = losses.MultiSimilarityLoss(alpha=2, beta=50, base=0.5)
+    criterion = losses.TripletMarginLoss(margin=0.2)
 
     return model, train_loader, test_loader, criterion, optimizer

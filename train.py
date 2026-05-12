@@ -3,13 +3,30 @@ import wandb
 import torch
 import os
 
+
 def get_checkpoint_path():
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    save_dir = os.path.abspath(os.path.join(current_dir, "..", "trained_models"))
+    save_dir = os.path.join(current_dir, "trained_models")
     return os.path.join(save_dir, "model_best.pth")
+
+
+def unfreeze_layers(model):
+    print("Descongelant BERT i ResNet per al fine-tuning final")
+    for param in model.parameters():
+        param.requires_grad = True
+
+
+def save_checkpoint(state, is_best):
+    if is_best:
+        path = get_checkpoint_path()
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        torch.save(state, path)
+        print(f"Mejor modelo guardado en: {path} (R@1: {state['best_r1']:.4f})")
+
 
 def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"):
     wandb.watch(model, criterion, log="all", log_freq=10)
+
     example_ct = 0
     batch_ct = 0
     best_r1 = 0.0
@@ -28,6 +45,14 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
         print("No s'ha trobat cap checkpoint, iniciant entrenament des de zero.")
 
     for epoch in tqdm(range(start_epoch, config.epochs)):
+        # --- NOVA LÒGICA DE DESCONGELACIÓ ---
+        if epoch == 5:
+            unfreeze_layers(model)
+            # Opcional: Pots reduir el LR aquí perquè el fine-tuning no sigui brusc
+            for param_group in optimizer.param_groups:
+                # Reduïm el learning rate per al fine-tuning
+                param_group['lr'] = config.learning_rate / 10
+
         model.train()
 
         for _, batch in enumerate(loader):
@@ -64,7 +89,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
 def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cuda"):
     model.train()
-    txt_emb, img_emb = model({'input_ids': input_ids, 'attention_mask': mask}, images)
+    txt_emb, img_emb = model({'input_ids': input_ids.squeeze(1), 'attention_mask': mask.squeeze(1)}, images)
 
     # Normalizamos
     txt_emb = torch.nn.functional.normalize(txt_emb, p=2, dim=1)
@@ -85,9 +110,11 @@ def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cu
     optimizer.step()
     return loss
 
+
 def train_log(loss, example_ct, epoch):
     wandb.log({"epoch": epoch, "loss": loss}, step=example_ct)
     print(f"Loss after {str(example_ct).zfill(5)} examples: {loss:.3f}")
+
 
 def validate_retrieval(model, loader, device):
     model.eval()
@@ -109,11 +136,5 @@ def validate_retrieval(model, loader, device):
     correct = torch.arange(len(txts)).to(device).view(-1, 1)
     r1 = (sim.topk(1, dim=1)[1] == correct).any(dim=1).float().mean().item()
     r10 = (sim.topk(10, dim=1)[1] == correct).any(dim=1).float().mean().item()
-    return {"R@1": r1, "R@10": r10}
 
-def save_checkpoint(state, is_best):
-    if is_best:
-        path = get_checkpoint_path()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        torch.save(state, path)
-        print(f"Mejor modelo guardado en: {path} (R@1: {state['best_r1']:.4f})")
+    return {"R@1": r1, "R@10": r10}
