@@ -36,8 +36,8 @@ sweep_config = {
         "embedding_dim": {"values": [512]},
         "margin": {"values": [0.1, 0.2, 0.3]},
         # Congelació dels encoders
-        "freeze_bert": {"values": True},
-        "freeze_resnet": {"values": True},
+        "freeze_bert": {"value": True},
+        "freeze_resnet": {"value": True},
         # Fixos — no són hiperparàmetres a explorar
         "epochs": {"value": 10},
         "dataset": {"value": "ComicsPAP"},
@@ -58,6 +58,7 @@ def model_pipeline():
         print(f"  learning_rate : {config.learning_rate}")
         print(f"  batch_size    : {config.batch_size}")
         print(f"  embedding_dim : {config.embedding_dim}")
+        print(f"  margin        : {config.margin}")
         print(f"  freeze_bert   : {config.freeze_bert}")
         print(f"  freeze_resnet : {config.freeze_resnet}")
         print(f"{'='*60}\n")

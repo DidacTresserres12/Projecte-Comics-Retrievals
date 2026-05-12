@@ -62,6 +62,7 @@ def make(config, device="cuda"):
     train_loader = torch.utils.data.DataLoader(
         dataset=train_data, batch_size=config.batch_size,
         shuffle=True, pin_memory=True)
+    
     test_loader = torch.utils.data.DataLoader(
         dataset=test_data, batch_size=config.batch_size,
         shuffle=False, pin_memory=True)

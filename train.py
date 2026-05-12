@@ -75,7 +75,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
             "epoch": epoch,
             "val/R@1": val_metrics["R@1"],
             "val/R@10": val_metrics["R@10"]
-        }, step=example_ct)
+        }, step=epoch) # Fiquem epoch a l'eix x de WandB per veure millor l'evolució al llarg de les epochs
 
         # Guardado
         is_best = val_metrics["R@1"] > best_r1
