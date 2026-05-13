@@ -133,3 +133,4 @@ dmypy.json
 model_best.pth
 *.pth
 wandb/
+trained_models/*.pth
