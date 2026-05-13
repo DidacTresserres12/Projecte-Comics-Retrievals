@@ -1,103 +1,89 @@
-# Test Script — Comics Retrieval
+# Guia d'Execució i Proves (Test) - Grup 09
 
-Aquest document explica com utilitzar el script `test.py` per avaluar el model entrenat i fer demostracions amb exemples individuals.
-
----
-
-## Requisits
-
-- Tenir un model entrenat guardat en un fitxer `.pth` (generat per `main.py` a la carpeta `trained_models/`)
-- Tenir les dependències instal·lades: `torch`, `transformers`, `torchvision`, `datasets`, `wandb`, `Pillow`
+Aquest document detalla el protocol per reproduir l'avaluació del model de Retrieval de còmics i el funcionament de la demo personalitzada. Totes les proves s'han realitzat a la VM d'Intel·ligència Artificial de la UAB.
 
 ---
 
-## Modes d'ús
+## 1. Configuració de l'Entorn
 
-El script té dos modes que es poden combinar:
-
-### 1. Mode Demo (exemple individual)
-
-Donada una imatge i una llista de textos candidats, el model calcula la similitud de cada text amb la imatge i indica quin és el més similar.
+Per garantir que el script `test.py` trobi les llibreries de C++ actualitzades de Conda i no utilitzi les del sistema (evitant errors de `GLIBCXX`), cal executar la següent comanda abans de qualsevol prova:
 
 ```bash
-python test.py \
-  --model_path trained_models/model_best.pth \
-  --image path/a/la/imatge.jpg \
-  --texts "A hero fights a villain" "A dog sleeps on the sofa" "Two characters talk"
-```
-
-**Sortida esperada:**
-```
-Imatge: path/a/la/imatge.jpg
-──────────────────────────────────────────────────
-  [0.8342]  A hero fights a villain
-  [0.2103]  A dog sleeps on the sofa
-  [0.4871]  Two characters talk
-──────────────────────────────────────────────────
-  ✓ Millor coincidència: "A hero fights a villain" (sim=0.8342)
+export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 ```
 
 ---
 
-### 2. Mode Avaluació completa
+## 2. Avaluació Global del Dataset
 
-Avalua el model sobre el dataset de validació complet i calcula les mètriques estàndard de retrieval: **R@1**, **R@5** i **R@10**.
+L'avaluació calcula la capacitat del model per trobar la vinyeta correcta entre tot el conjunt de test (932 exemples). El script ha estat optimitzat per carregar directament els fitxers de dades en format `.arrow` des de la carpeta del servidor, evitant problemes de quota de disc.
+
+### Execució
 
 ```bash
-python test.py \
-  --model_path trained_models/model_best.pth \
-  --eval
+python test.py --model_path trained_models/model_best.pth --eval --device cuda
 ```
 
-Per enviar els resultats a Weights & Biases afegeix `--wandb`:
+### Mètriques Obtingudes (Resultats Reals)
+
+Després de processar el set de test amb el model final, els resultats oficials del grup són:
+
+- **Recall@1:** `0.0075`
+- **Recall@10:** `0.0536`
+
+> **Nota tècnica:** Tot i que els valors són baixos a causa de la complexitat del dataset COMIC-PAP, representen un rendiment significativament superior a l'atzar (`~0.001`), validant l'aprenentatge del model.
+
+---
+
+## 3. Demo Personalitzada (Validació Qualitativa)
+
+El mode demo permet introduir una imatge i una llista de frases candidates per observar com el model puntua la similitud del cosinus entre elles.
+
+### Exemple d'execució
 
 ```bash
-python test.py \
-  --model_path trained_models/model_best.pth \
-  --eval \
-  --wandb
+python test.py --model_path trained_models/model_best.pth --image demo_panel.png --texts "un coche de policia" "un bosque" --device cuda
 ```
 
-**Sortida esperada:**
-```
-========================================
-  Test R@1  : 0.3521
-  Test R@5  : 0.6104
-  Test R@10 : 0.7238
-========================================
+### Resultat esperat
+
+En les nostres proves, el model ha demostrat coherència semàntica assignant una puntuació més alta a la descripció correcta:
+
+```text
+Frase: "un coche de policia" -> Similitud: 0.3311
+Frase: "un bosque" -> Similitud: 0.2342
 ```
 
 ---
 
-### 3. Ambdós modes alhora
+## 4. Paràmetres del Script
+
+| Paràmetre       | Tipus     | Descripció |
+|----------------|-----------|-------------|
+| `--model_path` | `string`  | Obligatori. Ruta al fitxer `.pth` entrenat. |
+| `--eval`       | `flag`    | Activa l'avaluació sobre el dataset de test complet. |
+| `--image`      | `string`  | [Demo] Ruta a la imatge per a la prova individual. |
+| `--texts`      | `string+` | [Demo] Textos candidats separats per espais. |
+| `--device`     | `string`  | Dispositiu de càlcul (`cuda` o `cpu`). |
+
+---
+
+## 5. Troubleshooting (Solució de Problemes)
+
+### Disk Quota Exceeded
+
+Si apareix aquest error, neteja la memòria temporal amb:
 
 ```bash
-python test.py \
-  --model_path trained_models/model_best.pth \
-  --eval \
-  --image panel.jpg \
-  --texts "A hero fights" "A dog sleeps"
+rm -rf ~/.cache/huggingface/datasets
 ```
 
----
+El script actual ja minimitza aquest risc amb la càrrega directa.
 
-## Paràmetres
+### GLIBCXX_3.4.30 not found
 
-| Paràmetre | Tipus | Per defecte | Descripció |
-|---|---|---|---|
-| `--model_path` | string | **obligatori** | Ruta al fitxer `.pth` del model entrenat |
-| `--embedding_dim` | int | 512 | Dimensió de l'embedding (ha de coincidir amb l'entrenament) |
-| `--device` | string | cpu | `cpu` o `cuda` |
-| `--image` | string | — | [Demo] Ruta a la imatge d'exemple |
-| `--texts` | string+ | — | [Demo] Textos candidats separats per espai |
-| `--eval` | flag | — | [Eval] Avalua sobre el dataset de test complet |
-| `--wandb` | flag | — | [Eval] Envia els resultats a Weights & Biases |
+Recorda executar l'`export` del punt 1 per carregar les llibreries de Conda.
 
----
+### CUDA Out of Memory
 
-## Mètriques
-
-- **R@K (Recall at K):** proporció de consultes on la resposta correcta apareix entre els K resultats més similars. Com més alt millor (màxim = 1.0).
-  - R@1: la resposta correcta és la primera
-  - R@5: la resposta correcta és entre les 5 primeres
-  - R@10: la resposta correcta és entre les 10 primeres
+Pots reduir el `batch_size` dins del fitxer `test.py` (actualment a `32`).
