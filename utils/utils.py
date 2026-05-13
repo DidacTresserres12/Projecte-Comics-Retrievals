@@ -59,7 +59,7 @@ def make(config, device="cuda", use_subset=True):
 
     # Dataset complet
     full_train_data = ComicsPAPDataset(raw_dataset['train'], tokenizer)
-    test_data       = ComicsPAPDataset(raw_dataset['val'],   tokenizer)
+    test_data = ComicsPAPDataset(raw_dataset['validation'],   tokenizer)
 
     # Reducció al 20% del train per al sweep (reproducible amb seed fixe)
     if use_subset:

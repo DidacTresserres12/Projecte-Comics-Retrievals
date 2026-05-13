@@ -191,7 +191,7 @@ if __name__ == "__main__":
         from dataloaders.dataset import ComicsPAPDataset
 
         raw_dataset = load_dataset("VLR-CVC/ComicsPAP", "caption_relevance")
-        test_data   = ComicsPAPDataset(raw_dataset['val'], model.bert_tokenizer)
+        test_data   = ComicsPAPDataset(raw_dataset['validation'], model.bert_tokenizer)
         test_loader = torch.utils.data.DataLoader(test_data, batch_size=32, shuffle=False)
 
         if args.wandb:
