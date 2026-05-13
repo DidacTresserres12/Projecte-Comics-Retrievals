@@ -67,10 +67,10 @@ def make(config, device="cuda", use_subset=True):
         rng = np.random.default_rng(42)
         subset_indices = rng.choice(num_train, int(num_train * 0.2), replace=False)
         train_data = Subset(full_train_data, subset_indices)
-        print(f"⚠️  Usant SUBSET del 20%: {len(train_data)} mostres de {num_train}")
+        print(f"Usant SUBSET del 20%: {len(train_data)} mostres de {num_train}")
     else:
         train_data = full_train_data
-        print(f"🚀 Usant DATASET COMPLET: {len(train_data)} mostres")
+        print(f"Usant DATASET COMPLET: {len(train_data)} mostres")
 
     train_loader = torch.utils.data.DataLoader(
         dataset=train_data,

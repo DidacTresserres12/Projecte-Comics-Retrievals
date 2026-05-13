@@ -51,36 +51,24 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
     example_ct = 0
     batch_ct = 0
     best_r1 = 0.0
-    start_epoch = 0
 
-    # --- Reprendre des de checkpoint si existeix ---
-    checkpoint_path = get_checkpoint_path()
-    if os.path.exists(checkpoint_path):
-        print(f"Checkpoint trobat a {checkpoint_path}, reprenent l'entrenament...")
-        checkpoint = torch.load(checkpoint_path, map_location=device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        best_r1 = checkpoint['best_r1']
-        start_epoch = checkpoint['epoch']
-        print(f"Reprenent des de l'epoch {start_epoch} amb best R@1: {best_r1:.4f}")
-    else:
-        print("No s'ha trobat cap checkpoint, iniciant entrenament des de zero.")
+    # NOTA: No carreguem cap checkpoint global aquí perquè dins d'un sweep
+    # cada run ha de partir SEMPRE des de zero amb els seus propis hiperparàmetres.
+    # Carregar un checkpoint d'un run anterior contaminaria els pesos i faria
+    # que la mètrica val/R@1 donés sempre el mateix valor independentment
+    # dels hiperparàmetres seleccionats.
+    print("Iniciant entrenament des de zero (sweep run nou).")
 
-    # Calculem a quina epoch descongelar:
-    # A la meitat del training, però com a mínim a l'epoch 2 (si hi ha epochs suficients).
-    # Amb epochs=[3,5]: descongelar a epoch 1 (de 3) o epoch 2 (de 5).
-    # Amb epochs=10 (futur): descongelar a epoch 5.
-    # Si només hi ha 3 epochs, mai descongelarem (no val la pena, massa poc temps).
-    unfreeze_at = config.epochs // 2  # meitat del training
+    # Descongelar les últimes capes des del principi (epoch 0).
+    # Tenir BERT i ResNet 100% congelats fa que text_projection i image_projection
+    # rebin sempre els mateixos features fixos → l'espai d'embedding no aprèn
+    # res diferenciador i el R@1 queda constant al valor aleatori base.
+    # Descongelar layer11 de BERT i layer4 de ResNet des del principi dona prou
+    # senyal perquè el model aprengui a separar parelles correctes d'incorrectes.
+    unfreeze_last_layers(model)
+    print("Capes finals de BERT (layer 11) i ResNet (layer4) descongelades des de l'inici.")
 
-    for epoch in tqdm(range(start_epoch, config.epochs)):
-
-        # Descongelar a la meitat del training (només si hi ha prou epochs)
-        if config.epochs >= 4 and epoch == unfreeze_at:
-            unfreeze_last_layers(model)
-            # Reduïm LR x10 per al fine-tuning: canvis petits per no destruir els pesos
-            for param_group in optimizer.param_groups:
-                param_group['lr'] = config.learning_rate / 10
-            print(f"  [Epoch {epoch}] Fine-tuning activat. LR → {config.learning_rate / 10:.2e}")
+    for epoch in tqdm(range(0, config.epochs)):
 
         model.train()
 

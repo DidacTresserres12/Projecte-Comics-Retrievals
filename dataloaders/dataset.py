@@ -19,34 +19,26 @@ class ComicsPAPDataset(Dataset):
     def __len__(self):
         return len(self.ds)
 
+
     def __getitem__(self, idx):
         item = self.ds[idx]
-        
-        # Gestión de imagen
-        # Intentamos sacar la imagen del contexto
-        if 'context' in item and len(item['context']) > 0:
-            image = item['context'][-1].convert('RGB')
-        # Si el contexto falla, probamos con 'panel_image' (por si acaso)
-        elif 'panel_image' in item:
-            image = item['panel_image'].convert('RGB')
-        # Si todo falla, creamos una imagen negra de 224x224
-        else:
-            from PIL import Image
-            image = Image.new('RGB', (224, 224), color=0)
-        
-        # Gestión de texto
-        if 'options' in item and 'solution_index' in item:
-            caption = item['options'][item['solution_index']]
-        else:
-            caption = item.get('previous_panel_caption', "")
-        caption = str(caption) if caption is not None else ""
 
-        # 3. Transformaciones
+        # Imatge correcta
+        sol_idx = item['solution_index']
+        if sol_idx < 0:
+            sol_idx = 0
+        image = item['options'][sol_idx].convert('RGB')
+
+        # Text
+        caption = item.get('previous_panel_caption', "") or ""
+
+        # Transformaciones
         if self.transform:
             image = self.transform(image)
-        # 4. Tokenización
+
+        # Tokenización
         encoding = self.tokenizer(
-            caption, # pasamos a string
+            caption,
             padding='max_length',
             truncation=True,
             max_length=self.max_length,

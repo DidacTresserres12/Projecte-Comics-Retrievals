@@ -190,7 +190,7 @@ if __name__ == "__main__":
         from datasets import load_dataset
         from dataloaders.dataset import ComicsPAPDataset
 
-        raw_dataset = load_dataset("VLR-CVC/ComicsPAP", "caption_relevance")
+        raw_dataset = load_dataset("/home/datasets/COMIC-PAP")
         test_data   = ComicsPAPDataset(raw_dataset['validation'], model.bert_tokenizer)
         test_loader = torch.utils.data.DataLoader(test_data, batch_size=32, shuffle=False)
 

@@ -151,15 +151,23 @@ class Baseline(nn.Module):
             text_embeddings: Tensor of shape [batch_size, embedding_dim]
         """
         if raw_text is not None:
-            text_features = self.preprocess_text(raw_text).to(device)
+            text_features = self.preprocess_text(raw_text).to(next(self.parameters()).device)
 
-        # Get BERT embeddings ([CLS] token)
-        with torch.no_grad() if self.bert.training is False else torch.enable_grad():
+        # Get BERT embeddings ([CLS] token).
+        # Apliquem no_grad NOMÉS als paràmetres de BERT quan està congelat,
+        # però sempre fora del bloc de projecció perquè text_projection
+        # necessita gradients durant tot l'entrenament.
+        bert_frozen = not any(p.requires_grad for p in self.bert.parameters())
+        if bert_frozen:
+            with torch.no_grad():
+                outputs = self.bert(**text_features)
+                cls_token = outputs.last_hidden_state[:, 0, :].detach()
+        else:
             outputs = self.bert(**text_features)
-            text_features = outputs.last_hidden_state[:, 0, :]  # [CLS] token
+            cls_token = outputs.last_hidden_state[:, 0, :]
 
-        # Project to embedding space
-        text_embeddings = self.text_projection(text_features)
+        # Project to embedding space (sempre amb gradients)
+        text_embeddings = self.text_projection(cls_token)
 
         # L2 normalize
         text_embeddings = F.normalize(text_embeddings, p=2, dim=1)
@@ -179,15 +187,20 @@ class Baseline(nn.Module):
         if image_paths is not None:
             image_features = self.preprocess_image(image_paths)
 
-        # Get ResNet features
-        with torch.no_grad() if not self.resnet[0].training else torch.enable_grad():
-            image_features = self.resnet(image_features)
-            image_features = image_features.flatten(
-                start_dim=1
-            )  # Flatten to [batch_size, features]
+        # Get ResNet features.
+        # Apliquem no_grad NOMÉS quan ResNet està congelat, i sempre fora
+        # del bloc de projecció perquè image_projection necessita gradients.
+        resnet_frozen = not any(p.requires_grad for p in self.resnet.parameters())
+        if resnet_frozen:
+            with torch.no_grad():
+                feats = self.resnet(image_features)
+                feats = feats.flatten(start_dim=1).detach()
+        else:
+            feats = self.resnet(image_features)
+            feats = feats.flatten(start_dim=1)
 
-        # Project to embedding space
-        image_embeddings = self.image_projection(image_features)
+        # Project to embedding space (sempre amb gradients)
+        image_embeddings = self.image_projection(feats)
 
         # L2 normalize
         image_embeddings = F.normalize(image_embeddings, p=2, dim=1)
