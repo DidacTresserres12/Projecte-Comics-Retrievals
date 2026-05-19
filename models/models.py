@@ -1,7 +1,14 @@
+import torch
 import torch.nn as nn
+import torch.nn.functional as F
+from transformers import BertModel, BertTokenizer
+import torchvision.models as models
+from PIL import Image
+import torchvision.transforms as transforms
+
 
 # Conventional and convolutional neural network
-
+# NECESSARI ???
 class ConvNet(nn.Module):
     def __init__(self, kernels, classes=10):
         super(ConvNet, self).__init__()
@@ -23,15 +30,6 @@ class ConvNet(nn.Module):
         out = self.fc(out)
         return out
     
-#Carles
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from transformers import BertModel, BertTokenizer
-import torchvision.models as models
-from PIL import Image
-import torchvision.transforms as transforms
-
 
 class Baseline(nn.Module):
     def __init__(
@@ -60,17 +58,22 @@ class Baseline(nn.Module):
         if freeze_bert:
             for param in self.bert.parameters():
                 param.requires_grad = False
+            # Descongelar layer11 + pooler per fine-tuning parcial
+            for name, param in self.bert.named_parameters():
+                if "encoder.layer.11" in name or "pooler" in name:
+                    param.requires_grad = True
 
-        # Initialize ResNet for image encoding (remove final classification layer)
-        self.resnet = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
         self.resnet = nn.Sequential(
-            *list(self.resnet.children())[:-1]
-        )  # Remove final FC layer
+            *list(models.resnet50(weights=models.ResNet50_Weights.DEFAULT).children())[:-1]
+        )
 
         # Freeze ResNet parameters if specified
         if freeze_resnet:
             for param in self.resnet.parameters():
                 param.requires_grad = False
+            # Descongelar layer4 per fine-tuning parcial
+            for param in self.resnet[7].parameters():
+                param.requires_grad = True
 
         # Get dimensions of BERT and ResNet outputs
         self.bert_output_dim = self.bert.config.hidden_size  # Usually 768
@@ -90,27 +93,15 @@ class Baseline(nn.Module):
         )
 
         # Image preprocessing
-        self.image_transform = transforms.Compose(
-            [
-                transforms.Resize(256),
-                transforms.CenterCrop(224),
-                transforms.ToTensor(),
-                transforms.Normalize(
-                    mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-                ),
-            ]
-        )
+        self.image_transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
     def preprocess_text(self, text_samples):
-        """
-        Preprocess text using BERT tokenizer
-
-        Args:
-            text_samples: List of text strings
-
-        Returns:
-            Dictionary of input_ids, attention_mask, etc.
-        """
+        """Tokenitza una llista de strings amb el tokenizer de BERT."""
         encoded_text = self.bert_tokenizer(
             text_samples,
             padding="max_length",
@@ -121,15 +112,7 @@ class Baseline(nn.Module):
         return encoded_text
 
     def preprocess_image(self, image_paths):
-        """
-        Preprocess images for ResNet
-
-        Args:
-            image_paths: List of paths to images or PIL Image objects
-
-        Returns:
-            Tensor of preprocessed images
-        """
+        """Preprocesa una llista de paths o imatges PIL per a ResNet."""
         images = []
         for img in image_paths:
             if isinstance(img, str):
@@ -141,14 +124,14 @@ class Baseline(nn.Module):
 
     def encode_text(self, text_features=None, raw_text=None):
         """
-        Encode text into the joint embedding space
-
-        Args:
-            text_features: Preprocessed text features for BERT (optional)
-            raw_text: List of raw text strings (optional)
-
+        Codifica text a l'espai d'embedding conjunt.
+ 
+        Aplica no_grad a BERT només si totes les seves capes estan congelades
+        (mai serà el cas amb freeze_bert=True, ja que layer11 sempre és activa).
+        Les capes de projecció sempre reben gradients.
+ 
         Returns:
-            text_embeddings: Tensor of shape [batch_size, embedding_dim]
+            text_embeddings: Tensor [batch_size, embedding_dim], L2-normalitzat
         """
         if raw_text is not None:
             text_features = self.preprocess_text(raw_text).to(next(self.parameters()).device)
@@ -175,14 +158,14 @@ class Baseline(nn.Module):
 
     def encode_image(self, image_features=None, image_paths=None):
         """
-        Encode images into the joint embedding space
-
-        Args:
-            image_features: Preprocessed image features (optional)
-            image_paths: List of image paths or PIL Images (optional)
-
+        Codifica imatges a l'espai d'embedding conjunt.
+ 
+        Aplica no_grad a ResNet només si totes les seves capes estan congelades
+        (mai serà el cas amb freeze_resnet=True, ja que layer4 sempre és activa).
+        Les capes de projecció sempre reben gradients.
+ 
         Returns:
-            image_embeddings: Tensor of shape [batch_size, embedding_dim]
+            image_embeddings: Tensor [batch_size, embedding_dim], L2-normalitzat
         """
         if image_paths is not None:
             image_features = self.preprocess_image(image_paths)
@@ -206,21 +189,12 @@ class Baseline(nn.Module):
         image_embeddings = F.normalize(image_embeddings, p=2, dim=1)
         return image_embeddings
 
-    def forward(
-        self, text_features=None, image_features=None, raw_text=None, image_paths=None
-    ):
+    def forward(self, text_features=None, image_features=None, raw_text=None, image_paths=None):
         """
-        Forward pass through the model
-
-        Args:
-            text_features: Preprocessed text features (optional)
-            image_features: Preprocessed image features (optional)
-            raw_text: List of raw text strings (optional)
-            image_paths: List of image paths or PIL Images (optional)
-
+        Forward pass: codifica text i/o imatge i retorna els embeddings.
+ 
         Returns:
-            text_embeddings: Encoded text (if text input provided)
-            image_embeddings: Encoded images (if image input provided)
+            (text_embeddings, image_embeddings): cada un pot ser None si no s'ha proporcionat input.
         """
         text_embeddings = None
         image_embeddings = None
@@ -235,14 +209,10 @@ class Baseline(nn.Module):
 
     def compute_similarity(self, text_embeddings, image_embeddings):
         """
-        Compute similarity scores between text and image embeddings
-
-        Args:
-            text_embeddings: Tensor of shape [batch_size_text, embedding_dim]
-            image_embeddings: Tensor of shape [batch_size_image, embedding_dim]
-
+        Calcula la matriu de similaritat cosinus entre text i imatge.
+ 
         Returns:
-            similarity: Tensor of shape [batch_size_text, batch_size_image]
+            similarity: Tensor [batch_size_text, batch_size_image]
         """
         similarity = torch.mm(text_embeddings, image_embeddings.t())
         return similarity

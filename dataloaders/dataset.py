@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
 
+
 class ComicsPAPDataset(Dataset):
     def __init__(self, hf_dataset, tokenizer, max_length=128):
         # Guardamos el dataset como 'self.ds'
@@ -32,9 +33,8 @@ class ComicsPAPDataset(Dataset):
         # Text
         caption = item.get('previous_panel_caption', "") or ""
 
-        # Transformaciones
-        if self.transform:
-            image = self.transform(image)
+        # Transformació de la imatge
+        image = self.transform(image)
 
         # Tokenización
         encoding = self.tokenizer(

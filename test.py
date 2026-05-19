@@ -6,12 +6,13 @@ import torch.nn.functional as F
 import torchvision.transforms as T
 from PIL import Image
 from tqdm import tqdm
+from models.models import Baseline
+
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-if script_dir not in sys.path:
-    sys.path.insert(0, script_dir)
-
-from models.models import Baseline
+root_path  = os.path.abspath(os.path.join(script_dir, ".."))
+if root_path not in sys.path:
+    sys.path.insert(0, root_path)
 
 
 def load_model(model_path, embedding_dim=512, device="cpu"):
@@ -144,7 +145,7 @@ if __name__ == "__main__":
         ]
 
         # Cargamos los ficheros directamente para evitar problemas de cuota de disco
-        raw_dataset = load_dataset("arrow", data_files={'test': test_files})
+        raw_dataset = load_dataset("/home/datasets/COMIC-PAP")
         test_data   = ComicsPAPDataset(raw_dataset['test'], model.bert_tokenizer)
         test_loader = torch.utils.data.DataLoader(
             test_data, batch_size=32, shuffle=False, num_workers=4
