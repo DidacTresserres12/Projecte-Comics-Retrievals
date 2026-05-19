@@ -37,12 +37,12 @@ sweep_config = {
     "parameters": {
         # Hiperparàmetres d'optimització
         "learning_rate": {"values": [1e-4, 5e-5, 2e-5, 1e-5]},
-        "batch_size":    {"values": [64, 128]},
+        "batch_size":    {"values": [64, 128,256,512]},
         # Arquitectura del model
         "embedding_dim": {"values": [512]},
         "margin":        {"values": [0.1, 0.2, 0.3, 0.5]},
         # Epochs: 5 permet desfreeze parcial a epoch 2; 10 a epoch 5
-        "epochs":        {"values": [10, 15]},
+        "epochs":        {"values": [10, 15,20,25,30]},
         # Metadades (no canvien)
         "dataset":       {"value": "ComicsPAP"},
         "architecture":  {"value": "BERT-ResNet"},
