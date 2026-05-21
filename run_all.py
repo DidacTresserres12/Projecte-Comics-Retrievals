@@ -212,14 +212,14 @@ def step2_sweep(device):
     sweep_config = {
         "name":   "comics-sbert-triplet-clip-filtered",
         "method": "bayes",
-        "metric": {"name": "val/R@1", "goal": "maximize"},
+        "metric": {"name": "best_R@1", "goal": "maximize"},
         "early_terminate": {"type": "hyperband", "min_iter": 2, "eta": 2},
         "parameters": {
             "learning_rate":   {"values": [1e-4, 2e-5, 5e-5]},
             "batch_size":      {"values": [64, 128, 256]},
             "embedding_dim":   {"values": [512]},
             "margin":          {"values": [0.1, 0.2, 0.3]},
-            "clip_threshold":  {"values": [0.0, 0.15, 0.20]},
+            "clip_threshold":  {"values": [0.0, 0.10, 0.15, 0.18, 0.20, 0.22, 0.25]},
             "freeze_sbert":    {"value": True},
             "freeze_resnet":   {"value": True},
             "epochs":          {"values": [5, 10]},
