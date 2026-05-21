@@ -52,7 +52,8 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
     example_ct = 0
     batch_ct = 0
-    best_r1 = 0.0
+    best_r1  = 0.0
+    best_r10 = 0.0
 
     # Descongelar les últimes capes des del principi.
     # Amb els encoders 100% congelats les capes de projecció reben sempre
@@ -84,15 +85,37 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
         val_metrics = validate_retrieval(model, val_loader, device)
 
+        # Actualitzar millors mètriques i guardar checkpoint si millora
+        is_best = val_metrics["R@1"] > best_r1
+        if is_best:
+            best_r1  = val_metrics["R@1"]
+            best_r10 = val_metrics["R@10"]
+            # Guardar el model en el seu millor moment (no al final del run)
+            path = get_checkpoint_path()
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            torch.save({
+                "epoch":     epoch,
+                "model":     model.state_dict(),
+                "best_r1":   best_r1,
+                "best_r10":  best_r10,
+            }, path)
+            print(f"  ✅ Nou millor model guardat (R@1={best_r1:.4f}, R@10={best_r10:.4f})")
+
         wandb.log({
             "epoch":            epoch,
             "train/epoch_loss": epoch_loss / len(loader),
+            # Mètriques de l'epoch actual
             "val/R@1":          val_metrics["R@1"],
             "val/R@10":         val_metrics["R@10"],
+            # Millors mètriques acumulades del run → visibles al WandB summary
+            "val/best_R@1":     best_r1,
+            "val/best_R@10":    best_r10,
         }, step=batch_ct)
 
-        if val_metrics["R@1"] > best_r1:
-            best_r1 = val_metrics["R@1"]
+    # Escriure explícitament al summary de WandB → la taula del sweep
+    # mostrarà sempre el MÀXIM, no l'últim epoch
+    wandb.run.summary["best_R@1"]  = best_r1
+    wandb.run.summary["best_R@10"] = best_r10
 
     # Retornem el millor R@1 d aquest run perque main.py decideixi
     # si es el millor de tot el sweep i guardi el model
