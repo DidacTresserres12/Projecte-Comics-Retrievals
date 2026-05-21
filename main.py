@@ -37,6 +37,7 @@ sweep_config = {
         "batch_size":    {"values": [64, 128, 256]},
         "embedding_dim": {"values": [512]},
         "margin":        {"values": [0.1, 0.2, 0.3]},
+        "clip_threshold": {"values": [0.0, 0.15, 0.20, 0.25]},
         "freeze_sbert":  {"value": True},
         "freeze_resnet": {"value": True},
         "epochs":        {"values": [5, 10]},
@@ -61,6 +62,7 @@ def model_pipeline():
         print(f"  batch_size    : {config.batch_size}")
         print(f"  embedding_dim : {config.embedding_dim}")
         print(f"  margin        : {config.margin}")
+        print(f"  clip_threshold: {getattr(config, 'clip_threshold', 0.0)}")
         print(f"  epochs        : {config.epochs}")
         print(f"{'='*60}\n")
 

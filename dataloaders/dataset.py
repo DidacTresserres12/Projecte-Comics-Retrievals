@@ -1,29 +1,27 @@
+import json
+import os
 import torch
 from torch.utils.data import Dataset
 import torchvision.transforms as T
+from PIL import Image
 
 
 class ComicsPAPDataset(Dataset):
     """
     Dataset Comics-PAP per a cross-modal retrieval text-imatge.
 
-    Estructura de cada mostra:
-      - 'options':               llista de 4 imatges candidates
-      - 'solution_index':        índex (0-3) de la imatge correcta
-      - 'previous_panel_caption': text llarg (pot tenir salts de línia \\n)
+    Filtratge per CLIP score (opcional):
+      Si es passa clip_scores_path + clip_threshold > 0, s'exclouen les
+      mostres amb CLIP score inferior al threshold. Aixo elimina parelles
+      text-imatge poc alineades que contaminen l entrenament.
 
-    Retorna per cada mostra:
-      - 'image':          la imatge correcta (positiu per a TripletLoss)
-      - 'input_ids':      text tokenitzat
-      - 'attention_mask': màscara de padding
-
-    Els negatius per a TripletLoss es generen automàticament a train_batch
-    a partir dels altres exemples del batch (in-batch negatives).
+      Els CLIP scores es precalculen amb compute_clip_scores.py i es guarden
+      a clip_scores/clip_scores_{split}.json abans d'entrenar.
     """
 
-    def __init__(self, hf_dataset, tokenizer, max_length=128):
-        self.ds = hf_dataset
-        self.tokenizer = tokenizer
+    def __init__(self, hf_dataset, tokenizer, max_length=128,
+                 clip_scores_path=None, clip_threshold=0.0):
+        self.tokenizer  = tokenizer
         self.max_length = max_length
 
         self.transform = T.Compose([
@@ -33,25 +31,44 @@ class ComicsPAPDataset(Dataset):
                         std=[0.229, 0.224, 0.225])
         ])
 
+        # Filtratge per CLIP score
+        if clip_scores_path and os.path.exists(clip_scores_path) and clip_threshold > 0.0:
+            with open(clip_scores_path) as f:
+                clip_scores = json.load(f)
+            self.valid_indices = [
+                i for i in range(len(hf_dataset))
+                if float(clip_scores.get(str(i), 1.0)) >= clip_threshold
+            ]
+            n_total   = len(hf_dataset)
+            n_valid   = len(self.valid_indices)
+            n_removed = n_total - n_valid
+            print(f"  [CLIP filter] threshold={clip_threshold:.2f} → "
+                  f"conservem {n_valid}/{n_total} "
+                  f"(eliminades {n_removed}, {100*n_removed/n_total:.1f}%)")
+        else:
+            self.valid_indices = list(range(len(hf_dataset)))
+            if clip_threshold > 0.0:
+                print(f"  [CLIP filter] AVIS: no s'ha trobat {clip_scores_path}, "
+                      f"s'usa el dataset complet sense filtrar")
+
+        self.ds = hf_dataset
+
     def __len__(self):
-        return len(self.ds)
+        return len(self.valid_indices)
 
     def __getitem__(self, idx):
-        item = self.ds[idx]
-
+        item    = self.ds[self.valid_indices[idx]]
         sol_idx = item['solution_index']
         if sol_idx < 0:
             sol_idx = 0
-        image = self.transform(item['options'][sol_idx].convert('RGB'))
 
+        image   = self.transform(item['options'][sol_idx].convert('RGB'))
         caption = item.get('previous_panel_caption', '') or ''
 
         encoding = self.tokenizer(
-            caption,
-            padding='max_length',
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors='pt'
+            str(caption),
+            padding='max_length', truncation=True,
+            max_length=self.max_length, return_tensors='pt'
         )
 
         return {
