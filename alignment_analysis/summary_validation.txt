@@ -1,5 +1,5 @@
 Anàlisi d'alineació CLIP - Split: validation
-Generat: 2026-05-22 09:41:18
+Generat: 2026-05-22 16:18:32
 ============================================================
 
 RESUM GENERAL
