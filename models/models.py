@@ -65,8 +65,12 @@ class Baseline(nn.Module):
             for param in self.sbert.parameters():
                 param.requires_grad = False
 
-        # ── Encoder d'imatge: ResNet50 ──
-        self.resnet = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
+        # ── Encoder d'imatge: ResNet18 ──
+        # Canvi ResNet50 → ResNet18: menys paràmetres (11M vs 25M), feature map
+        # de 512 en lloc de 2048. Amb SBERT completament congelat, la projecció
+        # d'imatge és l'únic lloc on el model pot aprendre; ResNet18 + capes de
+        # projecció entrenables pot ser suficient i convergeix més ràpid.
+        self.resnet = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
         self.resnet = nn.Sequential(*list(self.resnet.children())[:-1])
 
         if freeze_resnet:
@@ -75,7 +79,7 @@ class Baseline(nn.Module):
 
         # Dimensions de sortida
         self.sbert_output_dim = self.sbert.config.hidden_size  # 384 per MiniLM, 768 per mpnet
-        self.resnet_output_dim = 2048
+        self.resnet_output_dim = 512  # ResNet18 dona 512 (vs 2048 de ResNet50)
 
         # ── Capes de projecció a l'espai d'embedding compartit ──
         # Sempre entrenables (no congelades), perquè és aquí on el model aprèn
