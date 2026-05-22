@@ -11,12 +11,20 @@ class ComicsPAPDataset(Dataset):
     Dataset Comics-PAP per a cross-modal retrieval text-imatge.
 
     Filtratge per CLIP score (opcional):
-      Si es passa clip_scores_path + clip_threshold > 0, s'exclouen les
-      mostres amb CLIP score inferior al threshold. Aixo elimina parelles
-      text-imatge poc alineades que contaminen l entrenament.
-
       Els CLIP scores es precalculen amb compute_clip_scores.py i es guarden
-      a clip_scores/clip_scores_{split}.json abans d'entrenar.
+      a clip_scores/clip_scores_{split}.json amb format:
+
+          { "dhgd1kfamu": 0.2341, "xk92mapldf": 0.1823, ... }
+
+      La clau és el 'sample_id' de cada mostra i el valor és el CLIP score
+      del PRIMER PARÀGRAF de la seva caption.
+
+      Si clip_threshold > 0, s'eliminen les mostres amb score < threshold.
+      Això redueix el dataset però garanteix que totes les parelles
+      text-imatge que queden estan ben alineades semànticament.
+
+      Si clip_scores_path és None o clip_threshold == 0, s'usa el dataset
+      complet sense filtrar.
     """
 
     def __init__(self, hf_dataset, tokenizer, max_length=128,
@@ -31,24 +39,25 @@ class ComicsPAPDataset(Dataset):
                         std=[0.229, 0.224, 0.225])
         ])
 
-        # Filtratge per CLIP score
+        # Filtratge per CLIP score: elimina mostres senceres
         if clip_scores_path and os.path.exists(clip_scores_path) and clip_threshold > 0.0:
-            with open(clip_scores_path) as f:
+            with open(clip_scores_path, encoding="utf-8") as f:
                 clip_scores = json.load(f)
+            # Filtrem per sample_id (clau del JSON)
             self.valid_indices = [
                 i for i in range(len(hf_dataset))
-                if float(clip_scores.get(str(i), 1.0)) >= clip_threshold
+                if float(clip_scores.get(hf_dataset[i]["sample_id"], 1.0)) >= clip_threshold
             ]
             n_total   = len(hf_dataset)
             n_valid   = len(self.valid_indices)
             n_removed = n_total - n_valid
             print(f"  [CLIP filter] threshold={clip_threshold:.2f} → "
-                  f"conservem {n_valid}/{n_total} "
+                  f"conservem {n_valid}/{n_total} mostres "
                   f"(eliminades {n_removed}, {100*n_removed/n_total:.1f}%)")
         else:
             self.valid_indices = list(range(len(hf_dataset)))
             if clip_threshold > 0.0:
-                print(f"  [CLIP filter] AVIS: no s'ha trobat {clip_scores_path}, "
+                print(f"  [CLIP filter] AVÍS: no s'ha trobat {clip_scores_path}, "
                       f"s'usa el dataset complet sense filtrar")
 
         self.ds = hf_dataset

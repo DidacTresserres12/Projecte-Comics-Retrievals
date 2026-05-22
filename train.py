@@ -51,13 +51,10 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
     wandb.watch(model, criterion, log="all", log_freq=10)
 
     example_ct = 0
-    batch_ct = 0
-    best_r1  = 0.0
-    best_r10 = 0.0
+    batch_ct   = 0
+    best_r1    = 0.0
+    best_r10   = 0.0
 
-    # Descongelar les últimes capes des del principi.
-    # Amb els encoders 100% congelats les capes de projecció reben sempre
-    # els mateixos features → l'espai d'embedding no aprèn res diferenciador.
     unfreeze_last_layers(model)
     print("Capes finals descongelades. Iniciant entrenament.")
 
@@ -73,7 +70,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
             loss = train_batch(images, input_ids, mask, model, optimizer, criterion, device)
 
             example_ct += len(images)
-            batch_ct += 1
+            batch_ct   += 1
             epoch_loss += loss.item()
 
             if ((batch_ct + 1) % 25) == 0:
@@ -85,40 +82,35 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
         val_metrics = validate_retrieval(model, val_loader, device)
 
-        # Actualitzar millors mètriques i guardar checkpoint si millora
         is_best = val_metrics["R@1"] > best_r1
         if is_best:
             best_r1  = val_metrics["R@1"]
             best_r10 = val_metrics["R@10"]
-            # Guardar el model en el seu millor moment (no al final del run)
             path = get_checkpoint_path()
             os.makedirs(os.path.dirname(path), exist_ok=True)
             torch.save({
-                "epoch":     epoch,
-                "model":     model.state_dict(),
-                "best_r1":   best_r1,
-                "best_r10":  best_r10,
+                "epoch":    epoch,
+                "model":    model.state_dict(),
+                "best_r1":  best_r1,
+                "best_r10": best_r10,
             }, path)
             print(f"  ✅ Nou millor model guardat (R@1={best_r1:.4f}, R@10={best_r10:.4f})")
 
+        # Només loguem les mètriques de l'epoch actual.
+        # Les millors (best_r1, best_r10) es guarden ÚNICAMENT al summary
+        # → evita columnes duplicades val/R@1 + val/best_R@1 al sweep de WandB.
         wandb.log({
             "epoch":            epoch,
             "train/epoch_loss": epoch_loss / len(loader),
-            # Mètriques de l'epoch actual
             "val/R@1":          val_metrics["R@1"],
             "val/R@10":         val_metrics["R@10"],
-            # Millors mètriques acumulades del run → visibles al WandB summary
-            "val/best_R@1":     best_r1,
-            "val/best_R@10":    best_r10,
         }, step=batch_ct)
 
-    # Escriure explícitament al summary de WandB → la taula del sweep
-    # mostrarà sempre el MÀXIM, no l'últim epoch
-    wandb.run.summary["best_R@1"]  = best_r1
-    wandb.run.summary["best_R@10"] = best_r10
+    # El summary agafa el màxim vist durant el run → la taula del sweep
+    # mostrarà el millor R@1/R@10 de cada run, no el de l'últim epoch.
+    wandb.run.summary["val/R@1"]  = best_r1
+    wandb.run.summary["val/R@10"] = best_r10
 
-    # Retornem el millor R@1 d aquest run perque main.py decideixi
-    # si es el millor de tot el sweep i guardi el model
     return best_r1
 
 
@@ -152,8 +144,6 @@ def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cu
 
     N = txt_emb.size(0)
 
-    # Labels: text_i i img_i → label i (parella positiva)
-    # Tot el que té label diferent és negatiu automàticament
     indices    = torch.arange(N, device=device)
     embeddings = torch.cat([txt_emb, img_emb], dim=0)   # [2N, emb_dim]
     labels     = torch.cat([indices, indices], dim=0)    # [2N]

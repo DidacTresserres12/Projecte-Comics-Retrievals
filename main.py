@@ -29,7 +29,7 @@ sweep_config = {
     "metric": {"name": "val/R@1", "goal": "maximize"},
     "early_terminate": {
         "type":     "hyperband",
-        "min_iter": 2,
+        "min_iter": 5,
         "eta":      2,
     },
     "parameters": {
@@ -37,10 +37,10 @@ sweep_config = {
         "batch_size":    {"values": [64, 128, 256]},
         "embedding_dim": {"values": [512]},
         "margin":        {"values": [0.1, 0.2, 0.3]},
-        "clip_threshold": {"values": [0.0, 0.15, 0.20, 0.25]},
+        "clip_threshold": {"values": [0.0, 0.25, 0.26, 0.27, 0.28, 0.29]},
         "freeze_sbert":  {"value": True},
         "freeze_resnet": {"value": True},
-        "epochs":        {"values": [5, 10]},
+        "epochs":        {"values": [10, 15]},
         "dataset":       {"value": "ComicsPAP"},
         "architecture":  {"value": "SentenceBERT-ResNet50-Triplet"},
     }
@@ -82,16 +82,20 @@ def model_pipeline():
             device=device,
         )
 
-        # Guardem el model localment NOMÉS si és el millor de tot el sweep
         if best_r1_this_run > best_r1_global:
             best_r1_global = best_r1_this_run
             os.makedirs(os.path.dirname(BEST_MODEL_PATH), exist_ok=True)
-            torch.save(model.state_dict(), BEST_MODEL_PATH)
+            torch.save({
+                "epoch":    None,
+                "model":    model.state_dict(),
+                "best_r1":  best_r1_global,
+                "best_r10": None,
+            }, BEST_MODEL_PATH)
             print(f"*** NOU MILLOR MODEL del sweep! R@1={best_r1_global:.4f} "
-                  f"guardat a {BEST_MODEL_PATH} ***")
+                f"guardat a {BEST_MODEL_PATH} ***")
 
 
 if __name__ == "__main__":
     wandb.login()
-    sweep_id = wandb.sweep(sweep_config, project="Comics-Retrieval-millores")
-    wandb.agent(sweep_id, function=model_pipeline, count=30)
+    sweep_id = wandb.sweep(sweep_config, project="Comics-Retrieval-CLIP-filter")
+    wandb.agent(sweep_id, function=model_pipeline, count=60)
