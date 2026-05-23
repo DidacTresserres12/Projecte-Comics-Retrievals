@@ -24,26 +24,32 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 BEST_MODEL_PATH = os.path.join(script_dir, "trained_models", "model_best.pth")
 
 sweep_config = {
-    "name":   "resnet18-sbert-congelat-mrr",   # nom visible al dashboard de WandB
+    "name":   "resnet50-sbert-congelat-v2",   # nom visible al dashboard de WandB
     "method": "bayes",
-    # Monitorizamos la métrica base, WandB se encargará de gestionar el summary max
-    "metric": {"name": "val/R@1", "goal": "maximize"},
+    "metric": {"name": "val/best_R@1", "goal": "maximize"},
+    # ── Early stopping més tolerant ──────────────────────────────────────────
+    # Abans: min_iter=5, eta=2  → massa agressiu, matava runs de 256 que
+    # triguen més epochs a convergir.
+    # Ara:   min_iter=8, eta=3  → dona més marge per recuperar-se de baixades
+    # temporals i permet que batch sizes grans (256, 512) arribin a convergir.
     "early_terminate": {
         "type":     "hyperband",
-        "min_iter": 5,
-        "eta":      2,
+        "min_iter": 8,
+        "eta":      3,
     },
     "parameters": {
-        "learning_rate": {"values": [1e-4, 2e-5, 5e-5]},
-        "batch_size":    {"values": [64, 128, 256]},
-        "embedding_dim": {"values": [512]},
-        "margin":        {"values": [0.1, 0.2, 0.3]},
-        "clip_threshold": {"values": [0.0, 0.25, 0.26, 0.27, 0.28, 0.29]},
-        "freeze_sbert":  {"value": True},    # SBERT sempre congelat (prof.)
-        "freeze_resnet": {"value": True},    # ResNet18 layer4 es descongela a train.py
-        "epochs":        {"values": [10, 15]},
-        "dataset":       {"value": "ComicsPAP"},
-        "architecture":  {"value": "ResNet18-SBERTcongelat"},
+        "learning_rate":   {"values": [1e-4, 5e-5, 2e-5, 1e-5]},
+        # Afegim batch_size 512 (recomanació prof. per a còmics: batch gran = més negatius)
+        "batch_size":      {"values": [64, 128, 256, 512]},
+        "embedding_dim":   {"values": [256, 512]},
+        "margin":          {"values": [0.1, 0.2, 0.3, 0.4]},
+        # Ampliem rang de clip_threshold per trobar el filtratge òptim
+        "clip_threshold":  {"values": [0.0, 0.25, 0.26, 0.27, 0.28, 0.29, 0.30, 0.32]},
+        "freeze_sbert":    {"value": True},    # SBERT sempre congelat (prof.)
+        "freeze_resnet":   {"value": True},    # ResNet50 layer4 es descongela a train.py
+        "epochs":          {"values": [10, 15, 20]},
+        "dataset":         {"value": "ComicsPAP"},
+        "architecture":    {"value": "ResNet50-SBERTcongelat"},
     }
 }
 
@@ -55,16 +61,19 @@ def model_pipeline():
     global best_r1_global
 
     with wandb.init() as run:
-        # ============================================================
-        # 📊 CONFIGURACIÓN DE LAS 6 COLUMNAS PARA EL DASHBOARD
-        # ============================================================
-        # Esto le dice a WandB que calcule y guarde los máximos históricos de cada run.
-        # Creará de forma independiente: val/MRR (max), val/R@1 (max) y val/R@10 (max)
-        # Las originales (val/MRR, etc.) seguirán mostrando el valor de la última epoch.
-        wandb.define_metric("val/MRR", summary="max")
-        wandb.define_metric("val/R@1", summary="max")
-        wandb.define_metric("val/R@10", summary="max")
-        # ============================================================
+        # ── Definim les mètriques del summary ───────────────────────────────
+        # IMPORTANT: NO posem summary="max" a val/R@1, val/R@10, val/MRR
+        # perquè això fa que WandB sobreescrigui el valor "current" de la
+        # taula amb el màxim històric, confondent el valor actual amb el millor.
+        #
+        # En canvi, loguem les BEST com a claus separades (val/best_R@1, etc.)
+        # que s'escriuen directament al summary des de train.py.
+        # Així la taula del sweep mostra:
+        #   val/R@1     → valor de l'ÚLTIM epoch (corba temporal)
+        #   val/best_R@1 → màxim assolit durant tot el run (summary)
+        wandb.define_metric("val/R@1",  summary="none")
+        wandb.define_metric("val/R@10", summary="none")
+        wandb.define_metric("val/MRR",  summary="none")
 
         config = wandb.config
         print(f"\n{'='*60}")
@@ -81,7 +90,6 @@ def model_pipeline():
             config, device=device
         )
 
-        # train() ya loguea las métricas normales (val/R@1, etc.) en cada epoch
         best_r1_this_run = train(
             model=model,
             loader=train_loader,
@@ -99,7 +107,6 @@ def model_pipeline():
                 "epoch":    None,
                 "model":    model.state_dict(),
                 "best_r1":  best_r1_global,
-                "best_r10": None,
             }, BEST_MODEL_PATH)
             print(f"*** NOU MILLOR MODEL del sweep! R@1={best_r1_global:.4f} "
                 f"guardat a {BEST_MODEL_PATH} ***")
@@ -107,5 +114,5 @@ def model_pipeline():
 
 if __name__ == "__main__":
     wandb.login()
-    sweep_id = wandb.sweep(sweep_config, project="ResNet18-SBERTcongelat-Triplet-MRR")
-    wandb.agent(sweep_id, function=model_pipeline, count=30)
+    sweep_id = wandb.sweep(sweep_config, project="ResNet50-SBERTcongelat-Triplet-v2")
+    wandb.agent(sweep_id, function=model_pipeline, count=50)

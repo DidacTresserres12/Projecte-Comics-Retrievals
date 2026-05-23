@@ -12,30 +12,25 @@ def get_checkpoint_path():
 
 def unfreeze_last_layers(model):
     """
-    Estratègia de descongelació per a ResNet18 + SBERT congelat (recomanació professor).
+    Estratègia de descongelació per a ResNet50 + SBERT congelat (recomanació professor).
 
-    ResNet18 (model.resnet és nn.Sequential):
+    ResNet50 (model.resnet és nn.Sequential):
       [0]=conv1, [1]=bn1, [2]=relu, [3]=maxpool,
       [4]=layer1, [5]=layer2, [6]=layer3, [7]=layer4, [8]=avgpool
       Descongelem layer4 (índex 7), els blocs residuals finals.
-      NOTA: ResNet18 vs ResNet50 → mateixa posició de layer4 (índex 7).
 
     SBERT: es manté completament congelat per decisió del professor.
       Amb SBERT congelat, la projecció de text rep sempre els mateixos
       embeddings fixos i aprèn a alinear-los amb els d'imatge.
-      ResNet18 és més petit (512 features vs 2048 de ResNet50), el que
-      pot facilitar l'alineació quan el costat de text és fix.
     """
-    # SBERT: es deixa tal com estava (congelat si freeze_sbert=True al config)
     sbert_trainable = sum(1 for p in model.sbert.parameters() if p.requires_grad)
     if sbert_trainable == 0:
         print("SBERT completament congelat (recomanació professor)")
     else:
         print(f"SBERT parcialment entrenable ({sbert_trainable} paràmetres)")
 
-    # ResNet18: descongelar layer4 (índex 7 del Sequential)
-    print("Descongelant layer4 de ResNet18 (índex 7 del Sequential)")
-    for param in model.resnet[7].parameters():   # layer4 de ResNet18
+    print("Descongelant layer4 de ResNet50 (índex 7 del Sequential)")
+    for param in model.resnet[7].parameters():
         param.requires_grad = True
 
 
@@ -54,7 +49,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
     batch_ct   = 0
     best_r1    = 0.0
     best_r10   = 0.0
-    best_mrr   = 0.0   # Mean Reciprocal Rank: millor valor vist durant el run
+    best_mrr   = 0.0
 
     unfreeze_last_layers(model)
     print("Capes finals descongelades. Iniciant entrenament.")
@@ -83,36 +78,46 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
         val_metrics = validate_retrieval(model, val_loader, device)
 
-        is_best = val_metrics["R@1"] > best_r1
-        if is_best:
-            best_r1  = val_metrics["R@1"]
-            best_r10 = val_metrics["R@10"]
+        # Actualitzem millors valors de forma INDEPENDENT per a cada mètrica
+        is_best_r1 = val_metrics["R@1"] > best_r1
+        if is_best_r1:
+            best_r1 = val_metrics["R@1"]
             path = get_checkpoint_path()
             os.makedirs(os.path.dirname(path), exist_ok=True)
             torch.save({
                 "epoch":    epoch,
                 "model":    model.state_dict(),
                 "best_r1":  best_r1,
-                "best_r10": best_r10,
             }, path)
-            print(f"  ✅ Nou millor model guardat (R@1={best_r1:.4f}, R@10={best_r10:.4f})")
+            print(f"  ✅ Nou millor model guardat (R@1={best_r1:.4f})")
 
-        # Actualitzem best_mrr independentment (pot millorar en epochs on R@1 no millora)
+        if val_metrics["R@10"] > best_r10:
+            best_r10 = val_metrics["R@10"]
+
         if val_metrics["MRR"] > best_mrr:
             best_mrr = val_metrics["MRR"]
 
-        # Loguem les mètriques de l'epoch actual (les corbes de val al llarg del temps)
+        # ── Log de mètriques per epoch ───────────────────────────────────────
+        # val/R@1, val/R@10, val/MRR → valor ACTUAL d'aquest epoch (corba temporal)
+        # val/best_R@1, val/best_R@10, val/best_MRR → millor vist fins ara (monotònic)
+        #
+        # Separant "current" i "best" en claus diferents evitem que WandB
+        # sobreescrigui el valor actual de la taula amb el màxim històric.
         wandb.log({
-            "epoch":            epoch,
-            "train/epoch_loss": epoch_loss / len(loader),
-            "val/R@1":          val_metrics["R@1"],
-            "val/R@10":         val_metrics["R@10"],
-            "val/MRR":          val_metrics["MRR"],
+            "epoch":             epoch,
+            "train/epoch_loss":  epoch_loss / len(loader),
+            # Valors actuals d'aquest epoch (per veure l'evolució temporal)
+            "val/R@1":           val_metrics["R@1"],
+            "val/R@10":          val_metrics["R@10"],
+            "val/MRR":           val_metrics["MRR"],
+            # Millors valors acumulats fins a aquest epoch (monotònics, per al sweep)
+            "val/best_R@1":      best_r1,
+            "val/best_R@10":     best_r10,
+            "val/best_MRR":      best_mrr,
         }, step=batch_ct)
 
-    # Guardem els MILLORS valors de tot el run al summary de WandB.
-    # Això fa que a la taula del sweep apareguin 3 columnes amb el màxim
-    # assolit (no el de l'últim epoch): best_R@1, best_R@10, best_MRR.
+    # Al final del run, escrivim el millor de cada mètrica al summary de WandB.
+    # Això apareix a la taula del sweep com una columna fixa (no l'últim epoch).
     wandb.run.summary["val/best_R@1"]  = best_r1
     wandb.run.summary["val/best_R@10"] = best_r10
     wandb.run.summary["val/best_MRR"]  = best_mrr
@@ -135,7 +140,7 @@ def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cu
       - negative: img_j / text_j amb j≠i → label diferent
 
     Amb batch size N tenim N-1 negatius disponibles per cada anchor.
-    Amb batch size gran (128, 256) → molts més triplets → millor gradient.
+    Amb batch size gran (256, 512) → molts més triplets → millor gradient.
     """
     model.train()
 
@@ -196,8 +201,6 @@ def validate_retrieval(model, loader, device):
     r1  = (sim.topk(1,  dim=1)[1] == gt).any(dim=1).float().mean().item()
     r10 = (sim.topk(min(10, len(txts)), dim=1)[1] == gt).any(dim=1).float().mean().item()
 
-    # MRR: per a cada consulta, trobem el rang (1-based) de la imatge correcta
-    # argsort descendent → posicions de menor a major similitud (rang 0 = millor)
     ranks = (sim.argsort(dim=1, descending=True) == gt).nonzero(as_tuple=False)[:, 1]
     mrr   = (1.0 / (ranks.float() + 1)).mean().item()
 
