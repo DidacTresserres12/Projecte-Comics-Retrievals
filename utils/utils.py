@@ -54,10 +54,13 @@ def make(config, device="cuda", use_subset=True):
         clip_scores_path=clip_train_path if clip_thr > 0 else None,
         clip_threshold=clip_thr
     )
+    # Validació: SENSE clip_threshold → avaluem sobre el dataset complet.
+    # El clip filtra pars de baixa qualitat per al training, però en val
+    # volem mesurar el rendiment real sobre TOTES les mostres.
     val_data = ComicsPAPDataset(
         raw_dataset['validation'], tokenizer,
-        clip_scores_path=clip_val_path if clip_thr > 0 else None,
-        clip_threshold=clip_thr
+        clip_scores_path=None,
+        clip_threshold=0.0
     )
 
     # ── Selecció del subset d'entrenament ────────────────────────────────────
