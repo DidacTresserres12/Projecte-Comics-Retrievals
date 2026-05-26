@@ -68,7 +68,7 @@ def make(config, device="cuda", use_subset=True):
         num_train = len(full_train_data)   # ja filtrat per CLIP si clip_thr > 0
         rng = np.random.default_rng(42)
 
-        fraction   = 0.20
+        fraction   = 0.40
         n_subset   = int(num_train * fraction)
         subset_indices = rng.choice(num_train, n_subset, replace=False)
         train_data     = Subset(full_train_data, subset_indices)
@@ -90,7 +90,7 @@ def make(config, device="cuda", use_subset=True):
     )
 
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=config.learning_rate, weight_decay=0.01
+        model.parameters(), lr=config.learning_rate, weight_decay=0.1
     )
 
     criterion = losses.TripletMarginLoss(

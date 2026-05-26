@@ -114,5 +114,5 @@ def model_pipeline():
 
 if __name__ == "__main__":
     wandb.login()
-    sweep_id = wandb.sweep(sweep_config, project="ResNet50-SBERTcongelat-Triplet-v2")
-    wandb.agent(sweep_id, function=model_pipeline, count=50)
+    sweep_id = wandb.sweep(sweep_config, project="Dataset_weight decay")
+    wandb.agent(sweep_id, function=model_pipeline, count=30)
