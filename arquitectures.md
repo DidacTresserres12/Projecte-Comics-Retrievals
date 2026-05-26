@@ -1,71 +1,157 @@
-# Proposta i Millora de l'Arquitectura - Grup 09
+# Arquitectura del Model Final — Comics Retrieval (Grup 09)
 
-L'arquitectura base utilitzada és un model **bi-encoder** que combina **BERT** (per al processament de text) i **ResNet-18** (per a la visió per computador), optimitzat per a la tasca de recuperació de vinyetes.
+## 1. Visió general
 
----
+El model final és un **bi-encoder cross-modal** dissenyat per a la tasca de text-to-image retrieval sobre el dataset COMIC-PAP. Donada una descripció textual d'un panell de còmic, el model ha d'identificar la imatge corresponent entre tots els panells del conjunt de validació.
 
-## Millores Implementades (Fase 1)
-
-La millora més significativa respecte a la implementació inicial ha estat el canvi en l'estratègia d'aprenentatge i la gestió de l'espai latent:
-
-### 1. Pas a Metric Learning
-Hem substituït la funció `CrossEntropyLoss` (pròpia de classificació) per **`MultiSimilarityLoss`** de la llibreria *PyTorch Metric Learning*. Aquesta decisió es fonamenta en:
-*   **Mineria d'exemples**: La funció se centra a minar parelles "difícils" (*hard negatives*), forçant una separació més clara en l'espai d'embeddings.
-*   **Robustesa**: És molt més eficaç per a tasques de *retrieval* on l'objectiu no és predir una classe, sinó ordenar resultats per similitud.
-
-### 2. Normalització d'Embeddings
-S'ha implementat una **normalització L2** a la sortida dels dos encoders.
-*   Això assegura que tots els vectors resultants es trobin en una hiperesfera d'unitat.
-*   Facilita la convergència del model i permet que la similitud del cosinus sigui una mètrica directa i interpretable per al rànquing.
-
-### 3. Exploració d'Hiperparàmetres (Sweep)
-Mitjançant una exploració sistemàtica amb *Weights & Biases*, s'han testejat diferents mides de batch i ritmes d'aprenentatge (*Learning Rate*).
-*   **Batch Size**: 64 (determinat com el més estable per a la GPU de la VM).
-*   **Learning Rate**: 1e-4.
-*   **Configuració final**: Aquesta combinació ofereix el millor equilibri entre velocitat de convergència i qualitat del rànquing (**R@10**).
+L'arquitectura projecta tant el text com la imatge a un **espai d'embedding compartit** de 512 dimensions, on la similitud cosinus entre vectors indica la probabilitat de que una parella text-imatge sigui correcta. Durant la inferència, per a cada consulta textual es calcula la similitud amb tots els embeddings d'imatge del conjunt de validació i es retorna el rànquing resultant.
 
 ---
 
-## Millores Implementades (Fase 2)
+## 2. Components de l'arquitectura
 
-Basant-nos en els resultats de la Fase 1 i les propostes de millora plantejades, aquesta setmana hem implementat les següents modificacions al model i al pipeline d'entrenament:
+### 2.1 Encoder de text: SentenceBERT (congelat)
 
-### 1. Substitució de BERT per SentenceBERT
-S'ha substituït **BERT base** (`bert-base-uncased`) per **SentenceBERT** (`sentence-transformers/all-MiniLM-L6-v2`) com a encoder de text. A diferència de BERT, SentenceBERT genera embeddings de frase directament optimitzats per a tasques de similitud semàntica mitjançant *mean pooling* sobre tots els tokens, en comptes de dependre únicament del token `[CLS]`. Això és especialment adequat per a les descripcions narratives de COMIC-PAP, que solen ser frases o paràgrafs complets.
+**Model**: `sentence-transformers/all-MiniLM-L6-v2`
 
-### 2. Substitució de ResNet-18 per ResNet-50
-S'ha actualitzat l'encoder visual de **ResNet-18** a **ResNet-50**, que disposa d'una capacitat representacional notablement superior (2048 dimensions de sortida enfront de les 512 de ResNet-18). Ambdós models s'inicialitzen amb pesos preentrenats d'ImageNet i la capa de classificació final s'elimina per obtenir els features visuals purs.
+SentenceBERT és un model basat en Transformer (6 capes, 12 caps d'atenció, dimensió oculta 384) preentrenat específicament per a tasques de similitud semàntica de frases mitjançant *contrastive learning* amb parelles de frases similars i dissimilars.
 
-### 3. Substitució de MultiSimilarityLoss per Triplet Margin Loss
-S'ha canviat la funció de pèrdua de `MultiSimilarityLoss` a **`TripletMarginLoss`** de la llibreria *PyTorch Metric Learning*. La Triplet Loss treballa amb tríades (àncora, positiu, negatiu) i imposa explícitament que la distància entre l'àncora i el positiu sigui inferior a la distància amb el negatiu per un marge $m$:
+A diferència de BERT base, que requereix el token `[CLS]` com a representació global, SentenceBERT aplica **mean pooling**: calcula la mitjana ponderada de tots els tokens de sortida (ponderada per l'`attention_mask` per ignorar els tokens de padding), produint un vector de 384 dimensions que encapsula la semàntica completa de la frase.
 
-$$d(\text{àncora}, \text{positiu}) + m < d(\text{àncora}, \text{negatiu})$$
+**Estratègia de congelació**: SBERT es manté **completament congelat** durant tot l'entrenament. Amb SBERT congelat, els embeddings de text son fixos i la capa de projecció de text aprèn a transformar aquests embeddings rics en l'espai d'embedding compartit. Aquesta decisió, recomanada pel professor Carles, evita que el fine-tuning de SBERT distorsioni els embeddings semàntics preentrenats, que ja son de molt alta qualitat per a textos narratius com els de COMIC-PAP.
 
-La mineria automàtica de negatius semi-difícils (*semi-hard negatives*) dins de cada batch proporciona el gradient més informatiu, evitant tant els negatius trivials com els excessivament difícils.
+**Paràmetres entrenables de SBERT**: 0 (completament congelat).
 
-### 4. Descongelació Parcial dels Encoders (Partial Unfreeze)
-Implementant la millora proposada a la Fase 1, s'han descongelat les últimes capes dels encoders **des del primer epoch** d'entrenament:
-*   **SentenceBERT**: descongelació a partir de la **layer 5** (les capes 0–4 resten congelades).
-*   **ResNet-50**: descongelació del bloc **layer4** (l'últim bloc residual).
+**Projecció de text**: `Linear(384→512)` seguida de normalització L2. La projecció és l'únic component del costat de text que s'entrena.
 
-Mantenir els encoders completament congelats produïa embeddings estàtics que impedien qualsevol adaptació al domini dels còmics. La descongelació parcial permet fine-tuning del coneixement pre-entrenat sense caure en l'oblit catastròfic (*catastrophic forgetting*).
+### 2.2 Encoder visual: ResNet50 (parcialment descongelat)
 
-### 5. Filtratge per CLIP Score
-S'ha implementat un pas de **neteja del dataset** previ a l'entrenament basat en el CLIP Score: es calcula la similitud semàntica text-imatge per a cada parella del dataset mitjançant un model CLIP i s'eliminen les parelles amb puntuació per sota d'un llindar determinat. Això permet descartar les parelles sorolloses (textos que descriuen el context narratiu i no la imatge directament) que dificulten l'aprenentatge de l'alineació text-imatge.
+**Model**: `torchvision.models.resnet50` amb pesos preentrenats d'ImageNet.
 
-### 6. Cerca Bayesiana d'Hiperparàmetres amb Hyperband Early Stopping
-S'ha substituït la cerca en graella per una **cerca Bayesiana** (`method: "bayes"`) amb WandB Sweeps, que aprèn quines zones de l'espai d'hiperparàmetres donen millors resultats i dirigeix la cerca de forma intel·ligent. S'ha afegit **Hyperband Early Stopping** per aturar automàticament els runs que clarament no progressen en les primeres epochs, estalviant recursos de còmput.
+ResNet50 és una xarxa convolucional residual de 50 capes amb l'arquitectura:
 
-Hiperparàmetres explorats: `learning_rate ∈ {1e-4, 5e-5, 2e-5}`, `batch_size ∈ {64, 128, 256, 512}`, `margin ∈ {0.1, 0.2, 0.3}`, `epochs ∈ {5, 10}`.
+```
+conv1 (7×7, stride 2)
+bn1 + relu + maxpool
+layer1: 3 blocs Bottleneck  (256 ch sortida)
+layer2: 4 blocs Bottleneck  (512 ch sortida)
+layer3: 6 blocs Bottleneck  (1024 ch sortida)
+layer4: 3 blocs Bottleneck  (2048 ch sortida)
+avgpool (global average pooling → vector de 2048)
+```
+
+La capa de classificació final (`fc`) s'elimina per obtenir el feature map visual pur de **2048 dimensions**.
+
+**Estratègia de descongelació** (`unfreeze_last_layers`): durant l'entrenament (`train.py`), s'inicialitza amb tots els pesos congelats i s'activa el gradient únicament per a **layer4** (índex 7 del `nn.Sequential`), els 3 blocs residuals finals. Això permet al model adaptar les representacions visuals d'alt nivell al domini dels còmics sense modificar les features de baix i mig nivell (textures, contorns, formes) que ja son generals i reutilitzables.
+
+**Paràmetres entrenables de ResNet50**: ~25M total, ~23.5M congelats, ~1.5M entrenables (layer4 + projecció).
+
+**Projecció visual**: `Linear(2048→512)` seguida de normalització L2.
+
+### 2.3 Capes de projecció i espai d'embedding
+
+Tant l'encoder de text com el visual projecten les seves representacions a un espai compartit de **512 dimensions** amb una capa lineal seguida de normalització L2:
+
+```
+text_proj : Linear(384  → 512)  +  L2 normalize
+image_proj: Linear(2048 → 512)  +  L2 normalize
+```
+
+La normalització L2 garanteix que tots els vectors estiguin a la hiperesfera unitària, de forma que la similitud cosinus és equivalent al producte escalar i oscil·la entre -1 i 1. Això simplifica tant l'entrenament com la inferència.
+
+### 2.4 Funció de pèrdua: TripletMarginLoss (pytorch-metric-learning)
+
+**Implementació**: `pytorch_metric_learning.losses.TripletMarginLoss` amb `margin=0.4`.
+
+La Triplet Loss treballa amb tríades `(àncora a, positiu p, negatiu n)` i imposa:
+
+$$\mathcal{L} = \max\bigl(0,\; d(a, p) - d(a, n) + m\bigr)$$
+
+on $d(\cdot, \cdot)$ és la distància euclídea (equivalent al cosinus amb vectors normalitzats) i $m=0.4$ és el marge mínim de separació.
+
+**Construcció dels triplets**: en cada pas d'entrenament es concatenen els embeddings de text i imatge en un sol tensor de `[2N, 512]` i s'assignen labels `[0, 1, ..., N-1, 0, 1, ..., N-1]`, on la parella `(text_i, img_i)` comparteix la mateixa label `i`. El miner automàtic de `pytorch-metric-learning` genera tots els triplets vàlids del batch:
+
+- **Àncora**: `text_i` (o `img_i`)
+- **Positiu**: `img_i` (o `text_i`) — mateixa label
+- **Negatiu**: qualsevol `img_j` o `text_j` amb `j ≠ i`
+
+Amb batch size `N=64`, hi ha fins a `N×(N-1) = 4032` triplets possibles per pas, dels quals el miner selecciona els **semi-hard negatives** (negatius que ja estan separats però per menys del marge). Això evita tant els negatius trivials (no aporten gradient) com els excessivament difícils (gradient inestable).
+
+**Marge = 0.4**: valor més gran que el típic 0.2, adequat per a un dataset visualment homogeni com COMIC-PAP on panells del mateix còmic son molt similars entre si i cal forçar una separació gran entre parelles incorrectes.
+
+### 2.5 Optimitzador: AdamW
+
+**Configuració**:
+- `lr = 1e-4`
+- `weight_decay = 0.1`
+
+AdamW és la variant de Adam amb *weight decay* desacoblat de la taxa d'aprenentatge. El weight decay de **0.1** aplica regularització L2 als pesos del model, penalitzant pesos grans i reduint l'overfitting. Vam provar weight_decay=0.01 i 0.1; el valor 0.1 va donar clarament millors resultats al sweep final.
 
 ---
 
-## Propostes de Millora Futura (Roadmap Fase 3)
+## 3. Filtratge del dataset: CLIP Score
 
-Basant-nos en l'anàlisi de resultats actual, proposem les següents línies de treball per a la propera iteració:
+Prèviament a l'entrenament, el dataset s'ha filtrat eliminant les parelles text-imatge amb baixa coherència semàntica. Per a cada parella del training set es calcula la **similitud cosinus CLIP** entre el text (primer paràgraf de la caption) i la imatge del panell. Les parelles amb score per sota de **0.29** s'eliminen.
 
-*   **Data Augmentation**: Implementar transformacions aleatòries sobre les imatges de còmic durant l'entrenament (`RandomHorizontalFlip`, `ColorJitter`, `RandomCrop`) per augmentar la variabilitat del dataset i reduir l'overfitting als patrons visuals específics del corpus.
+El threshold de 0.29 es va determinar experimentalment: és el valor que maximitza R@10 en el sweep (analitzat sobre la distribució de scores). Elimina les captions que descriuen el context narratiu del panell anterior (no la imatge actual) i conserva les parelles amb alineació semàntica real.
 
-*   **Early Stopping amb marge**: Aturar l'entrenament quan el R@1 de validació no millori durant `patience=3` epochs consecutives, amb un marge de tolerància (`min_delta=0.001`) per evitar aturades prematures per oscil·lació. El model guardat serà sempre el del millor epoch.
+**Important**: el filtratge CLIP s'aplica **exclusivament al training set**. El validation set s'avalua sempre sobre totes les mostres sense filtrar, per garantir que les mètriques siguin representives del rendiment real.
 
-*   **Augment del llindar de CLIP Score**: Explorar valors de llindar de filtratge CLIP més exigents per retenir únicament les parelles de major coherència semàntica, i estudiar el trade-off entre mida del dataset resultant i qualitat de l'entrenament.
+---
+
+## 4. Pipeline d'entrenament
+
+```
+Per a cada epoch:
+  Per a cada batch de N parells (text_i, img_i):
+    1. SBERT(text_i)         → txt_feat [N, 384]    (SBERT congelat)
+    2. ResNet50(img_i)        → img_feat [N, 2048]   (layer4 entrenable)
+    3. text_proj(txt_feat)    → txt_emb  [N, 512]
+    4. image_proj(img_feat)   → img_emb  [N, 512]
+    5. L2_normalize(txt_emb)  → txt_norm [N, 512]
+    6. L2_normalize(img_emb)  → img_norm [N, 512]
+    7. Concatenar: emb = [txt_norm; img_norm]  [2N, 512]
+    8. labels = [0..N-1, 0..N-1]
+    9. TripletMarginLoss(emb, labels) → loss escalar
+   10. optimizer.zero_grad() + loss.backward() + optimizer.step()
+
+  Al final de cada epoch:
+    validate_retrieval() → R@1, R@10, MRR sobre tot el val set
+    Guardar checkpoint si R@1 millora
+    Log a WandB: val/R@1, val/R@10, val/MRR (actual) + val/best_* (millor fins ara)
+```
+
+---
+
+## 5. Mètriques d'avaluació
+
+### R@K (Recall at K)
+
+Per a cada consulta textual del val set, es calcula la similitud cosinus amb tots els embeddings d'imatge del val set i s'ordenen de major a menor. R@K és 1 si la imatge correcta apareix entre les K primeres posicions, 0 en cas contrari. La mètrica final és la mitjana sobre totes les consultes.
+
+$$R@K = \frac{1}{|Q|}\sum_{q \in Q} \mathbf{1}[\text{rang}(q) \leq K]$$
+
+### MRR (Mean Reciprocal Rank)
+
+$$MRR = \frac{1}{|Q|}\sum_{q \in Q} \frac{1}{\text{rang}(q)}$$
+
+MRR és sensible a la posició exacta: un model que sempre retorna la imatge correcta en posició 2 tindrà MRR ≈ 0.5 però R@1 = 0. Complementa R@1 i R@10 donant informació sobre si el model "quasi encerta".
+
+---
+
+## 6. Resum de paràmetres del model final
+
+| Component | Detall |
+|---|---|
+| Encoder de text | SentenceBERT `all-MiniLM-L6-v2` (384 dim, congelat) |
+| Encoder visual | ResNet50 (2048 dim, layer4 entrenable) |
+| Espai d'embedding | 512 dimensions, normalitzat L2 |
+| Funció de pèrdua | TripletMarginLoss, margin=0.4 |
+| Optimitzador | AdamW, lr=1e-4, weight_decay=0.1 |
+| Batch size | 64 |
+| CLIP threshold | 0.29 (només training) |
+| Subset training | 40% del dataset |
+| Epochs (run final) | 150 |
+| Millor R@1 (sweep) | 0.0458 |
+| Millor R@10 (sweep) | 0.2328 |
+| Millor MRR (sweep) | 0.1002 |

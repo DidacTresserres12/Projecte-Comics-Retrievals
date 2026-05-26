@@ -1,62 +1,68 @@
-# Conclusions — Comics Retrieval
+# Conclusions — Comics Retrieval (Grup 09)
 
-## 1. Resum dels resultats
+## 1. Resum del procés
 
-El projecte ha abordat el problema de recuperació text-imatge sobre el dataset COMIC-PAP, implementant i avaluant diverses configuracions de model basades en la combinació de **SentenceBERT** (encoder de text) i **ResNet50** (encoder d'imatge) projectats a un espai d'embedding comú.
+Al llarg de tres setmanes, hem dissenyat, implementat i optimitzat un sistema de recuperació text-imatge per al dataset COMIC-PAP, passant per diverses arquitectures i resolent problemes tècnics reals que han condicionat tota l'evolució del projecte.
 
-Al llarg de 112 runs amb cerca Bayesiana d'hiperparàmetres, s'ha aconseguit un **R@1 = 0.0458** i un **R@10 = 0.2137** com a millors resultats en el conjunt de validació.
+El punt de partida va ser el codi base del Carles (ResNet18 + BERT + CrossEntropyLoss), que inicialment no produïa cap mètrica útil per culpa d'un bug en la càrrega d'imatges (es llegien com a imatges negres). La detecció i correcció d'aquest bug va ser la primera lliçó important: cal verificar sempre les dades d'entrada abans de culpar l'arquitectura.
 
----
+Des d'aquell punt de partida fins al model final, hem aconseguit:
 
-## 2. Conclusions per component
-
-### 2.1 SentenceBERT com a encoder de text
-
-La substitució de BERT base per **SentenceBERT** suposa una millora qualitativa important: SentenceBERT genera embeddings de frase directament optimitzats per a tasques de similitud semàntica, a diferència del token [CLS] de BERT base que requeria projecció i fine-tuning extensos. Aquesta elecció és coherent amb la naturalesa de la tasca, on el text és una descripció narrativa (frase o paràgraf) i no una paraula aïllada.
-
-### 2.2 Triplet Margin Loss
-
-La **Triplet Margin Loss** ha demostrat ser clarament superior al simple entrenament per similitud sense estructura de pèrdua mètrica. La millora de R@1 del **+71.5%** respecte a la configuració base (0.0267 → 0.0458) confirma que la funció de pèrdua és capaç d'estructurar l'espai d'embedding de forma que les parelles text-imatge correctes s'apropin i les incorrectes es separin.
-
-L'ús de `pytorch-metric-learning` facilita la mineria automàtica de tríades (anchor, positive, negative) dins de cada batch, aprofitant els negatius semi-difícils que aporten el gradient més informatiu.
-
-### 2.3 Descongelació parcial dels encoders
-
-La descongelació de les últimes capes de BERT (layer 5) i ResNet (layer4) **des del primer epoch** ha estat una decisió clau. Mantenir els encoders completament congelats produïa embeddings estàtics: les capes de projecció aprenien a mapejar sempre els mateixos vectors, sense cap capacitat d'adaptació al domini dels còmics. La descongelació parcial permet un fine-tuning del coneixement visual i lingüístic pre-entrenat sense caure en el problema de l'oblit catastròfic.
-
-### 2.4 Filtratge CLIP Score
-
-El filtratge previ de les parelles text-imatge amb baixa coherència semàntica (CLIP Score baix) millora la **qualitat i consistència** de l'entrenament. Tot i que no supera el R@1 màxim de la configuració sense filtratge, sí que eleva la mitjana de R@1 entre runs (+24% de millora en la mitjana) i redueix la variabilitat. Això suggereix que el dataset conté un nombre significatiu de parelles sorolloses que dificulten l'aprenentatge.
-
-### 2.5 Cerca d'hiperparàmetres (Bayesian + Hyperband)
-
-La cerca Bayesiana amb Hyperband Early Stopping ha permès explorar eficientment l'espai d'hiperparàmetres: el learning rate de **5e-5** i el batch size de **256** s'han identificat com els valors òptims. El batch gran és especialment important per a la Triplet Loss, que necessita diversitat de negatius dins de cada batch.
+| Fase | R@1 | R@10 |
+|---|---|---|
+| Inicial (bug imatges) | ~0.000 | ~0.000 |
+| BERT + ResNet18 + MultiSimilarity | 0.0267 | 0.1565 |
+| SentenceBERT + ResNet50 + Triplet | 0.0458 | 0.2137 |
+| **Model final** (+ weight decay + 40% dades) | **0.0458** | **0.2328** |
 
 ---
 
-## 3. Limitacions identificades
+## 2. Per què aquest és el millor model
 
-- **Mida del dataset d'entrenament**: s'ha entrenat amb el 20% de les dades per raons de cost computacional. És previsible una millora significativa al usar el dataset complet.
-- **Ambigüitat text-imatge**: les descripcions de COMIC-PAP fan referència sovint al context narratiu del panell anterior, no a la imatge directament. Això limita el sostre de rendiment de qualsevol model d'alineació directa text-imatge.
-- **Complexitat visual dels còmics**: panells del mateix còmic comparteixen personatges, estil i paleta de color, fent que el retrieval visual sigui intrínsecament difícil.
+El model final (`firm-sweep-24`) combina totes les decisions que, una a una, han demostrat millorar les mètriques:
+
+**SentenceBERT congelat** és la millor opció per al costat de text: els seus embeddings de frase son semànticament rics i estables des del primer moment. Intentar fer fine-tuning de SBERT no va millorar els resultats i afegia inestabilitat a l'entrenament, de manera que mantenir-lo congelat és la decisió correcta.
+
+**ResNet50 amb layer4 descongelada** aporta features visuals de 2048 dimensions amb capacitat d'adaptar-se als patrons visuals específics dels còmics (traços, colors plans, contorns marcats) sense perdre el coneixement preentrenat d'ImageNet. ResNet18 (512 dim) va demostrar ser insuficient quan SBERT estava congelat.
+
+**TripletMarginLoss amb marge 0.4** és adequada per a un dataset visualment homogeni: un marge gran força una separació clara entre parelles correctes i incorrectes fins i tot quan els panells son visualment similars entre si.
+
+**CLIP filtering a 0.29** elimina les parelles sorolloses del training (textos que descriuen el context narratiu, no la imatge) sense reduir excessivament el dataset. Aplicar-lo únicament al train és crucial; aplicar-lo al val, com vam fer per error durant algunes fases, produeix mètriques no representatives.
+
+**Weight decay = 0.1** afegeix regularització L2 que prevé l'overfitting, especialment important quan s'entrena amb un subset del dataset.
 
 ---
 
-## 4. Línies de millora futures
+## 3. Lliçons apreses
 
-En base als resultats obtinguts, les millores planificades per a les pròximes iteracions són:
+**El pipeline val tant com el model**: el bug de les imatges negres i l'error del CLIP en validació van generar setmanes d'anàlisi de resultats incorrectes. Qualsevol canvi en el pipeline d'avaluació ha de ser verificat immediatament amb casos trivials (un model random hauria de donar R@1 ≈ 1/N).
 
-**a) Data Augmentation**
-Aplicar transformacions aleatòries sobre les imatges de còmic durant l'entrenament (rotació, variació de color, crop aleatori) per augmentar la variabilitat del training set i reduir l'overfitting als patrons visuals específics del dataset.
+**La velocitat d'iteració és crítica**: treballar amb el 20-40% del dataset va permetre llançar molts més experiments en el mateix temps. Trobar l'equilibri entre qualitat dels resultats i velocitat d'iteració és una habilitat pràctica fonamental en deep learning.
 
-**b) Early Stopping amb marge**
-Implementar early stopping basat en la mètrica de validació R@1 amb un marge de tolerància (patience), de manera que l'entrenament s'aturi quan el model no millori durant N epochs consecutives. Això evita el sobreentrenament i redueix el cost computacional dels runs llargs.
+**Cada component té un raonament**: cada canvi d'arquitectura (SentenceBERT, ResNet50, Triplet Loss, CLIP filter) va millorar les mètriques per raons identificables i justificables, no per atzar. Entendre per què funciona cada component permet predir quines millores tindran impacte.
 
-**c) Augment del llindar de CLIP Score**
-Provar valors de llindar de filtratge CLIP més exigents per quedar-nos únicament amb les parelles de major coherència semàntica. El risc és reduir excessivament el dataset; cal trobar l'equilibri òptim.
+**Les mètriques han de ser fiables**: descobrir que el val set estava contaminat pel filtre CLIP va obligar a repetir experiments que ja donàvem per bons. Definir correctament les mètriques d'avaluació i assegurar-se que son independents del procés d'entrenament és un prerequisit no negociable.
+
+---
+
+## 4. Què es podria millorar
+
+Sabem que el model es pot millorar encara més, però per temps i coneixement considerem que hem assolit un resultat molt satisfactori per al nivell del projecte:
+
+**Entrenar amb el 100% del dataset**: hem treballat amb el 40% per raons de cost computacional. L'execució final de 150 epochs amb el 40% ens donarà una indicació, però és probable que el dataset complet millori significativament R@1 i R@10.
+
+**Data Augmentation**: aplicar transformacions aleatòries a les imatges de còmic durant el training (rotació, color jitter, crop) augmentaria la variabilitat del dataset efectiu i reduiria l'overfitting.
+
+**Explorar ResNet50 vs ViT**: els Vision Transformers han superat ResNet50 en molts benchmarks visuals. Un encoder ViT preentrenat podria capturar millor l'estil específic dels còmics.
+
+**Hard negative mining explícit**: en lloc de confiar en la mineria automàtica de `pytorch-metric-learning`, implementar un miner que prioritzi negatius visuals similars (altres panells del mateix còmic) podria forçar el model a aprendre distincions més fines.
 
 ---
 
 ## 5. Conclusió global
 
-El projecte ha demostrat que la combinació de **SentenceBERT + ResNet50 + Triplet Loss + descongelació parcial + filtratge CLIP** és una arquitectura viable per al problema de recuperació text-imatge en còmics, i que cada component aporta una millora mesurable i justificable sobre la configuració anterior. La recerca sistemàtica d'hiperparàmetres ha permès identificar la configuració òptima (lr=5e-5, bs=256) de forma eficient. Les millores futures basades en data augmentation i early stopping amb marge apunten a superar la barrera del R@1 > 0.05 en el conjunt de validació.
+Aquest projecte ens ha permès recórrer tot el cicle de treball d'un projecte real de deep learning: des de la depuració d'un bug de dades fins a l'optimització sistemàtica d'hiperparàmetres amb WandB Sweeps, passant per decisions d'arquitectura justificades i la gestió d'errors d'avaluació. 
+
+El resultat final, un model amb R@10 = 0.2328 sobre un dataset de recuperació multimodal complex com COMIC-PAP, representa una millora de més del 400% respecte al punt de partida i demostra que la combinació SentenceBERT + ResNet50 + TripletLoss + CLIP filtering és una arquitectura viable i ben fonamentada per a aquest tipus de problema.
+
+Sabem que hi ha marge de millora, però estem convençuts que les decisions que hem pres estan justificades, els experiments estan ben controlats i els resultats son reals i comparables. Hem après molt.
