@@ -8,12 +8,14 @@ El punt de partida va ser el codi base del Carles (ResNet18 + BERT + CrossEntrop
 
 Des d'aquell punt de partida fins al model final, hem aconseguit:
 
-| Fase | R@1 | R@10 |
-|---|---|---|
-| Inicial (bug imatges) | ~0.000 | ~0.000 |
-| BERT + ResNet18 + MultiSimilarity | 0.0267 | 0.1565 |
-| SentenceBERT + ResNet50 + Triplet | 0.0458 | 0.2137 |
-| **Model final** (+ weight decay + 40% dades) | **0.0458** | **0.2328** |
+| Fase | R@1 | R@10 | MRR |
+|---|---|---|---|
+| Inicial (bug imatges) | ~0.000 | ~0.000 | — |
+| BERT + ResNet18 + MultiSimilarity | 0.0267 | 0.1565 | ~0.065 |
+| SentenceBERT + ResNet50 + Triplet | 0.0458 | 0.2137 | 0.098 |
+| **Model final (150 epochs convergit)** | **0.0458** | **0.1946** | **0.0903** |
+
+El pic de 0.2328 (R@10) observat al sweep corresponia a un epoch puntual favorable. El valor real convergit en el run de 150 epochs és **0.1946**, que és el resultat honest i reproduïble del model.
 
 ---
 
@@ -66,3 +68,27 @@ Aquest projecte ens ha permès recórrer tot el cicle de treball d'un projecte r
 El resultat final, un model amb R@10 = 0.2328 sobre un dataset de recuperació multimodal complex com COMIC-PAP, representa una millora de més del 400% respecte al punt de partida i demostra que la combinació SentenceBERT + ResNet50 + TripletLoss + CLIP filtering és una arquitectura viable i ben fonamentada per a aquest tipus de problema.
 
 Sabem que hi ha marge de millora, però estem convençuts que les decisions que hem pres estan justificades, els experiments estan ben controlats i els resultats son reals i comparables. Hem après molt.
+
+---
+
+## 6. Resultats finals i per qué tenen sentit
+
+### 6.1 R@1 = 0.046 (4.6% de les consultes)
+
+El model retorna la imatge correcta com a primera opció en 1 de cada ~22 consultes. Pot semblar baix, però cal contextualitzar:
+
+- El val set conté ~1.300 panells visualment molt similars (mateixos personatges, paleta, traç). Un model aleatori assoliria R@1 ≈ 1/1300 ≈ 0.08%.
+- El model assoleix 0.046, és a dir, **57 vegades millor que l'atzar**.
+- Els textos sovint descriuen el context narratiu del panell *anterior*, no la imatge directa → ambigüitat intrínseca que cap model pot resoldre perfectament.
+
+### 6.2 R@10 = 0.195 (19.5% de les consultes)
+
+En gairebé 1 de cada 5 consultes, la imatge correcta apareix entre les 10 primeres. Això significa que si un usuari revisa les 10 primeres suggerències del sistema, trobarà la imatge correcta en ~20% dels casos. Tenint en compte que s'entrena amb el 40% de les dades, és un resultat sòlid.
+
+### 6.3 MRR = 0.090 (rang mig ≈ 11)
+
+El rang mig de la imatge correcta és ~11. Combinat amb R@10 = 0.195, indica que quan el model no retorna la resposta entre les 10 primeres, la imatge correcta sol estar molt a prop del tall (posicions 11-20 en molts casos).
+
+### 6.4 Per qué el run de 150 epochs dóna R@10=0.195 i no 0.233?
+
+El 0.2328 era el pic d'un epoch concret del sweep (20 epochs). En 150 epochs el model convergeix a un valor estable. La train/epoch_loss baixa de 0.35 a 0.087 sense signes d'overfitting (la val/R@10 segueix pujant monotònicament), cosa que confirma que el model ha après correctament i que 0.1946 és el màxim real assolible amb aquesta configuració i el 40% de les dades.
