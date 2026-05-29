@@ -39,7 +39,7 @@ El script et demanarà les credencials de WandB la primera vegada. Introdueix la
 
 **Què fa**:
 1. Carrega el 40% del dataset de training filtrat per CLIP (threshold 0.29)
-2. Construeix el model: SentenceBERT (congelat) + ResNet50 (layer4 entrenable)
+2. Construeix el model: SentenceBERT (totalment congelat) + ResNet50 (layer4 entrenable)
 3. Entrena 150 epochs amb TripletMarginLoss (margin=0.4), lr=1e-4, AdamW weight_decay=0.1
 4. Cada epoch calcula R@1, R@10 i MRR al validation set complet
 5. Guarda el millor checkpoint a `trained_models/model_best.pth` (millor R@1)
@@ -60,7 +60,7 @@ nohup python final_main.py > output.log 2>&1 &
 
 - `nohup`: el procés no es mata en tancar la terminal
 - `> output.log 2>&1`: tot el log (stdout + errors) es guarda a `output.log`
-- `&`: s'executa en background
+- `&`: el procés s'executa en segon pla (background)
 
 Per veure el progrés en temps real:
 
@@ -155,9 +155,9 @@ Imatge: path/a/la/imatge.jpg
   ✓ Millor coincidència: "A hero fights a villain" (sim=0.8342)
 ```
 
-Els valors entre claudàtors son la similitud cosinus (de -1 a 1). Com més alt, més similar.
+Els valors entre claudàtors són la similitud cosinus (de -1 a 1). Com més alt sigui el valor, més similar és.
 
-Per combinar demo i avaluació en la mateixa execució:
+Per combinar la demo i l'avaluació del dataset real de validació (les 262 mostres netes) en la mateixa execució:
 
 ```bash
 python test.py \
@@ -180,7 +180,7 @@ Totes les execucions de `final_main.py` i `main.py` sincronitzen automàticament
 
 Per accedir al dashboard:
 1. Ves a [wandb.ai](https://wandb.ai) i inicia sessió
-2. Selecciona el projecte `Comics-Retrieval-Final` (run final) o `Dataset_weight decay` (sweeps)
+2. Selecciona el projecte `Comics-Retrieval-Final` (per al run final) o el projecte de sweeps de l'equip per veure les gràfiques de control.
 3. Les gràfiques s'actualitzen en temps real mentre s'executa el training
 
 Si WandB no té connexió a internet, el log es guarda localment i es sincronitza quan hi hagi connexió:

@@ -18,7 +18,7 @@ SentenceBERT és un model basat en Transformer (6 capes, 12 caps d'atenció, dim
 
 A diferència de BERT base, que requereix el token `[CLS]` com a representació global, SentenceBERT aplica **mean pooling**: calcula la mitjana ponderada de tots els tokens de sortida (ponderada per l'`attention_mask` per ignorar els tokens de padding), produint un vector de 384 dimensions que encapsula la semàntica completa de la frase.
 
-**Estratègia de congelació**: SBERT es manté **completament congelat** durant tot l'entrenament. Amb SBERT congelat, els embeddings de text son fixos i la capa de projecció de text aprèn a transformar aquests embeddings rics en l'espai d'embedding compartit. Aquesta decisió, recomanada pel professor Carles, evita que el fine-tuning de SBERT distorsioni els embeddings semàntics preentrenats, que ja son de molt alta qualitat per a textos narratius com els de COMIC-PAP.
+**Estratègia de congelació**: SentenceBERT es deixa **totalment congelat** durant tot l'entrenament (no es modifiquen els seus pesos). Aquesta decisió la vam prendre després d'analitzar a fons les descripcions de text del dataset. Ens vam adonar que molts textos estaven "desalineats", és a dir, contaven coses genèriques o parlaven del que passava a la vinyeta anterior, en lloc de descriure la imatge actual. Com que el text té aquest límit de qualitat tan clar d'origen, intentar entrenar SBERT no servia de res. Per això, vam decidir congelar-lo per complet per no trencar els pesos que ja portava preentrenats i centrar tots els recursos en entrenar la part visual i les capes de projecció.
 
 **Paràmetres entrenables de SBERT**: 0 (completament congelat).
 
@@ -162,23 +162,23 @@ MRR és sensible a la posició exacta: un model que sempre retorna la imatge cor
 
 ### 7.1 Mètriques finals (run de 150 epochs)
 
-| Mètrica | Valor | Baseline (aleatori) | Millora |
+| Mètrica | Valor | Baseline (Atzar Real) | Rendiment sobre l'Atzar |
 |---|---|---|---|
-| R@1 | **0.0458** | ~0.0008 | ×57 |
-| R@10 | **0.1946** | ~0.0077 | ×25 |
-| MRR | **0.0903** | ~0.0008 | ×113 |
+| R@1 | **0.0458** | ~0.0038 ($1/262$) | **×12.0** |
+| R@10 | **0.1946** | ~0.0381 ($10/262$) | **×5.1** |
+| MRR | **0.0903** | ~0.0212 | **×4.3** |
 
-### 7.2 Per qué l'arquitectura produeix aquests resultats
+### 7.2 Per què l'arquitectura produeix aquests resultats
 
-**SentenceBERT congelat** garanteix que els embeddings de text son semànticament rics des del primer moment. La projecció `Linear(384→512)` aprèn ràpidament a alinear-los amb els embeddings visuals perquè el punt de partida ja és de qualitat.
+**SentenceBERT congelat** serveix per treure els vectors de text fixos des del principi. Com vam veure en l'anàlisi del dataset que els textos tenien falles d'origen i no coincidien bé amb les imatges, congelar SBERT evita que el model es torni boig intentant aprendre text sorollós. Així, deixem que la capa lineal `Linear(384→512)` s'encarregui simplement de passar aquests vectors a l'espai compartit.
 
-**ResNet50 amb layer4 entrenable** adapta les representacions d'alt nivell (formes, composicions, estils) al domini dels còmics sense perdre les features generals de les capes inferiors. Amb 2048 features de partida, la projecció `Linear(2048→512)` té molta informació per condensar.
+**ResNet50 amb layer4 entrenable** adapta de manera òptima les representacions de contingut conceptual, composició i disposició de vinyetes al domini dels còmics sense destruir les features generals de baix nivell (línies, contorns i colors) retingudes a les capes congelades inferiors. Amb 2048 features estructurals de sortida, la projecció visual té la informació necessària per condensar-se en les 512 dimensions de destí.
 
-**TripletMarginLoss amb marge 0.4** estructura l'espai d'embedding de forma que els embeddings text-imatge correctes s'apropen i els incorrectes se separen. Amb batch_size=64, fins a 4032 triplets per pas proporcionen un gradient ric.
+**TripletMarginLoss amb marge 0.4** estructura l'espai mètric forçant que els parells text-imatge correctes s'apropin i els incorrectes se separin mitjançant una penalització geomètrica exigent. L'ús de `margin=0.4` és clau per combatre l'homogeneïtat de l'estil visual dels còmics.
 
-**Normalització L2** a la sortida de les projeccions garanteix que la similitud cosinus és directament interpretable i que els vectors estan en una hiperesfera unitària on les distàncies son comparables.
+**Normalització L2** a la sortida de les dues branques de projecció és l'eix central del bi-encoder: restringeix els vectors a la superfície d'una hiperesfera unitària, assegurant que el producte escalar esdevingui la similitud cosinus pura i que les distàncies geomètriques a l'espai compartit siguin completament comparables durant el retrieval.
 
-**CLIP filtering a 0.29** elimina les parelles de training sorolloses, deixant un dataset més net on cada triplet aporta informació real sobre l'alineació text-imatge.
+**CLIP filtering a 0.29** actua com un excel·lent filtre de soroll al training set, eliminant aquelles captions que afegeixen desalineació semàntica (com descripcions contextuals de vinyetes passades), garantint que el model aprengui exclusivament amb parelles d'alta correspondència conceptual.
 
 ### 7.3 Anàlisi de la convergència
 

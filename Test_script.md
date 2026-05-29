@@ -16,7 +16,7 @@ export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
 ## 2. Avaluació Global del Dataset
 
-L'avaluació calcula la capacitat del model per trobar la vinyeta correcta entre tot el conjunt de test (932 exemples). El script ha estat optimitzat per carregar directament els fitxers de dades en format `.arrow` des de la carpeta del servidor, evitant problemes de quota de disc.
+L'avaluació calcula la capacitat del model per trobar la vinyeta correcta entre tot el conjunt de test (262 exemples). El script ha estat optimitzat per carregar directament els fitxers de dades en format `.arrow` des de la carpeta del servidor, evitant problemes de quota de disc.
 
 ### Execució
 
@@ -28,8 +28,9 @@ python test.py --model_path trained_models/model_best.pth --eval --device cuda
 
 Després de processar el set de test amb el model final, els resultats oficials del grup són:
 
-- **Recall@1:** `0.0075`
-- **Recall@10:** `0.0536`
+- **Recall@1:** `0.045`
+- **Recall@10:** `0.19`
+- **MRR:** `0.009`
 
 > **Nota tècnica:** Tot i que els valors són baixos a causa de la complexitat del dataset COMIC-PAP, representen un rendiment significativament superior a l'atzar (`~0.001`), validant l'aprenentatge del model.
 

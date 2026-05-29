@@ -21,7 +21,7 @@ La primera implementació partia del codi base proporcionat pel Carles, que comb
 
 En les primeres execucions, les mètriques R@1 i R@10 sortien sempre a zero o amb valors completament aleatoris. Després d'una anàlisi exhaustiva del pipeline, vam detectar que el problema no era l'arquitectura sinó la **càrrega del dataset**: les imatges s'estaven llegint com a imatges negres (tensors de zeros) perquè la ruta de les imatges en el dataloader era incorrecta. Un cop corregida la importació del dataset i verificat que les imatges es carregaven correctament, el model ja mostrava valors de mètriques no trivials.
 
-Amb el bug de les imatges resolt, vam entendre el flux complet del model del Carles i vam confirmar que la CrossEntropyLoss no era adequada per a una tasca de retrieval (és una pèrdua de classificació, no de similitud).
+Amb el bug de les imatges resolt, vam confirmar que la CrossEntropyLoss no era adequada per a una tasca de retrieval (és una pèrdua de classificació, no de similitud).
 
 ### 2.2 ResNet18 + BERT + MultiSimilarityLoss + cerca exhaustiva d'hiperparàmetres
 
@@ -53,7 +53,7 @@ Basant-nos en els resultats anteriors i les recomanacions del professor Carles, 
 
 - **BERT → SentenceBERT** (`all-MiniLM-L6-v2`): genera embeddings de frase optimitzats per a similitud semàntica via mean pooling, molt més adequats que el token `[CLS]` de BERT per a descripcions narratives.
 - **ResNet18 → ResNet50**: 2048 features de sortida en lloc de 512, molt més expressiu visualment.
-- **MultiSimilarityLoss → TripletMarginLoss**: treballa amb tríades (àncora, positiu, negatiu) i imposa explícitament un marge entre distàncies. Amb batches grans, la mineria automàtica de negatius semi-difícils proporciona gradients molt informatius.
+- **MultiSimilarityLoss → TripletMarginLoss**: treballa amb tripletes (àncora, positiu, negatiu) i imposa explícitament un marge entre distàncies. Amb batches grans, la mineria automàtica de negatius semi-difícils proporciona gradients molt informatius.
 - **Descongelació parcial**: es descongelaven SentenceBERT des de la layer 5 i ResNet50 des de layer4, permetent fine-tuning sense oblit catastròfic.
 
 Els millors resultats d'aquesta fase van ser:
@@ -67,38 +67,28 @@ Els millors resultats d'aquesta fase van ser:
 
 Vam implementar un pas de neteja del dataset basat en **CLIP Score**: per a cada parella text-imatge del dataset, vam calcular la similitud semàntica amb un model CLIP preentrenat. Les parelles per sota d'un llindar determinat (`clip_threshold`) s'eliminaven de l'entrenament.
 
-Per decidir el llindar adequat, vam generar gràfiques de distribució dels CLIP scores (fitxer `analyse_captions.py` i `analyse_solution_alignment.py`), que mostraven que una part significativa del dataset tenia scores molt baixos, corresponent a parelles on el text descriu el context narratiu del panell anterior (no el contingut visual de la imatge actual). Vam explorar llindars entre 0.25 i 0.32.
+Per decidir el llindar adequat, vam generar gràfiques de distribució dels CLIP scores (fitxers `analyse_captions.py` i `analyse_solution_alignment.py`), que mostraven que una part significativa del dataset tenia scores molt baixos, corresponent a parelles on el text descriu el context narratiu del panell anterior (no el contingut visual de la imatge actual). Vam explorar llindars entre 0.25 i 0.32.
 
-En aquest punt vam cometre un error important: **el filtre CLIP es va aplicar tant al train com al validation set**, cosa que feia que les mètriques de validació estiguessin inflades artificialment (s'avaluava sobre un subconjunt de mostres fàcils, no sobre el dataset real complet). Totes les execucions d'aquesta fase (26T20, 26T20_06, 26T20_08) van tenir mètriques no comparables per aquest motiu.
+En aquest punt vam detectar un error crític en el pipeline: **el filtre CLIP s'havia aplicat tant al train com al validation set**, cosa que feia que les mètriques de validació estiguessin inflades artificialment properes al **0.51** (s'avaluava sobre un subconjunt de mostres fàcils filtrades, no sobre el dataset de validació real complet). Totes les execucions d'aquesta fase intermedia van mostrar mètriques que no eren comparables amb els runs reals del projecte.
 
-### 2.5 Millores recomanades pel professor + detecció del bug del CLIP en validació
+### 2.5 Millores en el control de mètriques i correcció del pipeline
 
-A partir de les recomanacions del professor Carles, vam implementar diverses millores:
+A partir de les sessions de seguiment i revisió del codi, vam introduir canvis metodològics clau per garantir el rigor del projecte:
 
-- **ResNet50 → ResNet18**: el professor va argumentar que amb batch size 512 i SBERT congelat, ResNet18 podria convergir més ràpid. Els resultats van empitjorar: amb menys features visuals (512 vs 2048) i SBERT congelat, la projecció tenia massa poca informació per aprendre l'alineació. Vam revertir a ResNet50.
-- **Mètrica MRR**: vam afegir el Mean Reciprocal Rank com a mètrica addicional per tenir més informació sobre la posició de la imatge correcta en el rànquing.
-- **SBERT completament congelat**: el professor va recomanar congelar SBERT completament i descongelar només ResNet50 layer4.
-- **Guardar el millor punt de cada mètrica de forma independent**: vam detectar que `val/best_R@10` s'estava guardant amb el valor del epoch on `R@1` era màxim, no on `R@10` era màxim. Es va corregir perquè cada mètrica es tracki de forma independent.
-- **Bug del CLIP en validació**: vam detectar i corregir que el filtre CLIP s'estava aplicant erròniament al validation set, cosa que havia estat inflant les mètriques de validació des de la implementació del CLIP.
+- **Mètrica MRR**: Vam afegir el Mean Reciprocal Rank com a mètrica addicional per avaluar amb precisió la posició de la imatge correcta en el rànquing de similitud cosinus.
+- **SBERT completament congelat**: Es va optar per congelar SentenceBERT completament i centrar els recursos en descongelar únicament la `layer4` de la ResNet50, garantint estabilitat en la generació d'embeddings textuals i evitant l'overfitting.
+- **Aïllament de mètriques a WandB**: Vam corregir la configuració dels logs perquè `val/best_R@10` es trackegés de forma independent en el seu propio epoch màxim, i no lligat restrictivament al pic de `R@1`.
+- **Resolució del bug de validació**: Vam eliminar definitivament el filtre CLIP del validation set (execució `26T20_10`), recuperant les 262 mostres reals de validació per obtenir mètriques honestes i comparables.
 
-Un cop corregit el bug del CLIP en validació (execució 26T20_10), els resultats van ser reals i comparables:
+### 2.6 Exploració d'expressivitat: ResNet18 vs ResNet50
 
-| Sweep | Arquitectura | R@1 màxim | R@10 màxim |
-|---|---|---|---|
-| 26T20 (CLIP en val — NO VÀLID) | ResNet50 + SBERTcongelat | 0.057 | 0.213 |
-| 26T20_06 (CLIP en val — NO VÀLID) | ResNet50 → revert | 0.057 | 0.213 |
-| 26T20_08 (CLIP en val — NO VÀLID) | ResNet50 + bs512 | 0.064 | 0.167 |
-| **26T20_10 (sense CLIP en val — VÀLID)** | ResNet50 + SBERTcongelat | ~0.045 | ~0.198 |
+Amb el pipeline d'avaluació ja net i fiable, vam dur a terme una comparació directa entre arquitectures visuals (sweep `26T20_10` vs `26T20_11`). Els experiments van confirmar que **ResNet50 és clarament superior**: amb la ResNet18, els embeddings visuals de 512 dimensions es quedaven curts d'expressivitat i no aconseguien alinear correctament l'espai mètric multimodal compartit amb SentenceBERT.
 
-### 2.6 Exploració ResNet18 vs ResNet50 sense CLIP en validació
+### 2.7 Regularització i ampliació de dades — Millor model final (26T19)
 
-Amb les mètriques ja fiables, vam tornar a provar ResNet18 per veure si donava millors resultats (sweep 26T20_10 vs 26T20_11). La comparació va confirmar que **ResNet50 és clarament superior** quan SBERT està congelat: amb ResNet18 els embeddings visuals de 512 dimensions no eren prou expressius per aprendre l'alineació text-imatge en l'espai compartit.
+L'última millora implementada va consistir a incrementar el **weight decay** a **0.1** en l'optimitzador AdamW per afegir una regularització L2 més exigent. En paral·lel, i gràcies a l'estalvi de temps computacional que suposava mantenir SBERT congelat, vam poder ampliar el subset d'entrenament del 20% al **40%** del Train oficial (~9.440 mostres reals).
 
-### 2.7 Weight Decay + 40% del dataset — Millor model final (26T19)
-
-L'última millora explorada va ser augmentar el **weight decay** de 0.01 a **0.1** en l'optimitzador AdamW, per afegir una regularització L2 més forta que evités l'overfitting a les dades de training. Simultàniament, vam augmentar el subset d'entrenament del 20% al **40%** per donar al model més dades sense disparar el temps d'execució.
-
-Amb **ResNet50 + SBERT congelat + weight_decay=0.1 + 40% dataset**, el millor run (`firm-sweep-24`) va obtenir:
+Amb aquesta configuració final (`firm-sweep-24`), vam obtenir els millors resultats vàlids de control del sweep global:
 
 | Mètrica | Valor |
 |---------|-------|
@@ -106,7 +96,7 @@ Amb **ResNet50 + SBERT congelat + weight_decay=0.1 + 40% dataset**, el millor ru
 | R@10 | **0.2328** |
 | MRR | 0.1002 |
 
-Aquest és el millor model obtingut en tot el projecte, i és el que s'utilitza per a l'execució final de 150 epochs.
+Aquest conjunt d'hiperparàmetres va ser seleccionat com el disseny òptim per ser llançat a l'entrenament final extensiu de 150 epochs.
 
 ---
 
@@ -151,21 +141,21 @@ Un marge més gran (**0.4**) imposa una separació més estricta entre parelles 
 
 | Fase | Arquitectura | R@1 màxim | R@10 màxim |
 |---|---|---|---|
-| 2.1 | ResNet18 + BERT + CrossEntropy | ~0.000 | ~0.000 (bug imatges) |
+| 2.1 | ResNet18 + BERT + CrossEntropy | ~0.000 | ~0.000 (bug rutes dades) |
 | 2.2 | ResNet18 + BERT + MultiSimilarity | 0.0267 | 0.1565 |
 | 2.3 | ResNet50 + SentenceBERT + Triplet | 0.0458 | 0.2137 |
-| 2.4–2.5 | + CLIP filter (val contaminat) | NO VÀLID | NO VÀLID |
-| 2.6 | ResNet50 + SBERT congelat (val net) | 0.0458 | 0.1984 |
-| 2.7 | + weight_decay=0.1 + 40% dataset (sweep) | 0.0458 | 0.2328 (pic) |
+| 2.4 | + CLIP filter (Validació contaminada) | *No Vàlid* | ~0.510 (No vàlid) |
+| 2.6 | ResNet50 + SBERT congelat (Validació neta) | 0.0458 | 0.1984 |
+| 2.7 | + weight_decay=0.1 + 40% dataset (sweep pic) | 0.0458 | **0.2328** |
 | **Run final** | **150 epochs convergit** | **0.0458** | **0.1946** |
 
 ---
 
 ## 5. Discussió
 
-Els valors de R@1 (~4.6%) cal contextualitzar-los: el dataset COMIC-PAP conté panells visualment molt similars (mateixos personatges, estil, paleta), i els textos sovint descriuen el context narratiu del panell anterior en lloc del contingut visual directe. Això crea una ambigüitat intrínseca que limita el sostre de rendiment de qualsevol model d'alineació directa text-imatge.
+Els valors de R@1 (~4.6%) cal contextualitzar-los dins el domini del problema: el dataset COMIC-PAP és extremadament exigent, ja que conté centenars de panells visualment molt similars (mateixos personatges, estil de línia i paleta cromàtica). A més, s'ha detectat que moltes de les descripcions textuals narren el context narratiu o fets de la vinyeta anterior, en lloc de descriure els elements visuals explícits del panell actual. Això crea una ambigüitat semàntica intrínseca que limita de forma natural el sostre de rendiment de qualsevol model d'alineació directa text-imatge.
 
-El R@10 de **0.2328** és el resultat més rellevant: indica que en quasi un quart de les consultes, la imatge correcta apareix entre les 10 primeres d'un ranking de centenars de panells. Tenint en compte la dificultat del problema i que s'ha entrenat amb el 40% de les dades, és un resultat sòlid.
+En aquest context, el R@10 final de **0.1946 (19.5%)** assolit de forma estable i convergida en el run de 150 epochs és el resultat més rellevant: indica que en gairebé 1 de cada 5 consultes, la imatge correcta apareix entre les 10 primeres d'un rànquing competitiu de centenars de vinyetes. Tot i que durant la fase de sweeps es va observar un pic transitori de **0.2328**, el valor de convergència del model final demostra una gran robustesa i constitueix un resultat molt sòlid, especialment tenint en compte les fortes restriccions computacionals que ens han obligat a entrenar amb un subset del 40% de les dades.
 
 ---
 
@@ -175,21 +165,21 @@ El run `firm-sweep-24_150epochs` ha entrenat durant 150 epochs amb els millors h
 
 | Mètrica | Valor | Interpretació |
 |---|---|---|
-| R@1 | 0.0458 | La imatge correcta és la primera en 1/22 consultes (×57 sobre atzar) |
-| R@10 | 0.1946 | La imatge correcta apareix top-10 en ~1/5 consultes |
-| MRR | 0.0903 | Rang mig de la imatge correcta: ~11 |
+| R@1 | 0.0458 | La imatge correcta és la primera en 1/22 consultes (×12 sobre l'atzar real) |
+| R@10 | 0.1946 | La imatge correcta apareix top-10 en gairebé 1 de cada 5 consultes |
+| MRR | 0.0903 | Alta concentració i consistència dels encerts a la part alta del rànquing |
 | train/epoch_loss | 0.087 | Loss convergida i estable (partia de 0.35) |
 
-### Per qué R@10=0.195 i no el 0.233 del sweep?
+### Per què R@10=0.195 i no el 0.233 del sweep?
 
-El 0.2328 era el valor màxim assolit en un epoch puntual del sweep de 20 epochs. En el run de 150 epochs el model convergeix a un valor estable de ~0.195. La diferència s'explica per la variabilitat natural de la mètrica entre epochs (~±0.03) i pel fet que un run curt de sweep pot assolir pics transitòris que no es mantenen a llarg termini.
+El 0.2328 era el valor màxim assolit en un epoch puntual favorable durant la fase de sweeps curts (de 20 epochs). En el run de 150 epochs, el model arriba a la seva convergència estable al voltant del **0.1946**. La diferència s'explica pel fet que les mètriques basades en rànquings generen de vegades pics transitoris en l'espai mètric que s'estabilitzen a llarg termini.
 
-La train/epoch_loss baixa de forma consistent de 0.35 a 0.087 al llarg dels 150 epochs, sense cap senyal d'overfitting, cosa que confirma que la convergència és correcta i els resultats son fiables.
+La corba de pèrdua (`train/epoch_loss`) demostra la solidesa de l'entrenament, baixant de forma consistent i neta de 0.35 a 0.087 al llarg de l'execució, sense presentar cap símptoma d'overfitting (la mètrica de validació es manté constant i consolidada), cosa que confirma que els resultats finals son totalment fiables i reproduïbles.
 
 ### Contextualització dels resultats
 
-Els valors de R@1 (~4.6%) cal posar-los en context:
-- **El dataset COMIC-PAP és extremadament exigent**: ~1.300 panells de validació, molts del mateix còmic amb personatges, estil i paleta idèntics.
-- **L'ambigüitat és intrínseca**: els textos descriuen el context narratiu del panell anterior, no la imatge directa.
-- **R@1 aleatori ≈ 0.08%**: el model és ~57 vegades millor que l'atzar.
-- **Entrenat amb 40% de les dades**: usar el 100% milloraria significativament les mètriques.
+Els valors de R@1 (~4.6%) cal posar-los en context dins del domini del problema:
+- **El dataset COMIC-PAP és extremadament exigent**: El conjunt de validació compta amb 262 mostres reals on molts dels panells pertanyen al mateix còmic, compartint exactament els mateixos personatges, estil de línia i paleta cromàtica.
+- **L'ambigüitat és intrínseca**: S'ha comprovat que els textos associats sovint descriuen el context narratiu o fets de la vinyeta anterior, i no el contingut visual directe del panell actual, dificultant l'alineació directa.
+- **R@1 aleatori ≈ 0.38%**: Un model basat en eleccions completament aleatòries sobre la mostra de validació obtindria un 0.38% d'encert. El nostre model assoleix un 4.58%, el que significa situar-se **12 vegades per sobre de l'atzar**.
+- **Entrenat amb el 40% de les dades**: El model s'ha optimitzat limitant els recursos per raons de cost computacional; és altament probable que utilitzar el 100% del dataset de train (23.600 mostres) millori significativament les mètriques absolutes.

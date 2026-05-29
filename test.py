@@ -15,9 +15,7 @@ if root_path not in sys.path:
 from models.models import Baseline
 
 
-
 def load_model(model_path, embedding_dim=512, device="cpu"):
-
     model = Baseline(embedding_dim=embedding_dim).to(device)
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)
@@ -27,7 +25,6 @@ def load_model(model_path, embedding_dim=512, device="cpu"):
 
 
 def test(model, test_loader, device="cuda", log_wandb=False):
-
     model.eval()
     all_txt, all_img = [], []
 
@@ -47,28 +44,30 @@ def test(model, test_loader, device="cuda", log_wandb=False):
     txts = torch.cat(all_txt)   
     imgs = torch.cat(all_img)   
 
-
     sim = torch.matmul(txts, imgs.t())
 
+    indices_ordenats = torch.argsort(sim, dim=1, descending=True)
     ground_truth = torch.arange(len(txts), device=device).view(-1, 1)
 
+    rangs = (indices_ordenats == ground_truth).nonzero()[:, 1] + 1
+
     r1  = (sim.topk(1,  dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
-    r5  = (sim.topk(5,  dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
     r10 = (sim.topk(10, dim=1)[1] == ground_truth).any(dim=1).float().mean().item()
+    mrr = (1.0 / rangs.float()).mean().item()
 
     print(f"\n{'='*40}")
     print(f"  Test R@1  : {r1:.4f}")
-    print(f"  Test R@5  : {r5:.4f}")
     print(f"  Test R@10 : {r10:.4f}")
+    print(f"  Test MRR  : {mrr:.4f}")
     print(f"{'='*40}\n")
 
     if log_wandb:
-        wandb.log({"test/R@1": r1, "test/R@5": r5, "test/R@10": r10})
+        wandb.log({"test/R@1": r1, "test/R@10": r10, "test/MRR": mrr})
 
-    return {"R@1": r1, "R@5": r5, "R@10": r10}
+    return {"R@1": r1, "R@10": r10, "MRR": mrr}
+
 
 def demo(model, image_path, texts, device="cpu"):
-
     transform = T.Compose([
         T.Resize((224, 224)),
         T.ToTensor(),
@@ -106,6 +105,7 @@ def demo(model, image_path, texts, device="cpu"):
     print(f"  ✓ Millor coincidència: \"{texts[best_idx]}\" (sim={similarities[best_idx]:.4f})\n")
 
     return {text: sim.item() for text, sim in zip(texts, similarities)}
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test i demo del model Comics Retrieval")
