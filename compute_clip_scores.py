@@ -1,29 +1,3 @@
-"""
-compute_clip_scores.py
-======================
-Calcula el CLIP score de cada mostra del dataset ComicsPAP usant
-NOMÉS EL PRIMER PARÀGRAF de la caption.
-
-Format de sortida (per split):
-    {
-        "dhgd1kfamu": 0.2341,
-        "xk92mapldf": 0.1823,
-        ...
-    }
-
-La clau és el 'sample_id' de cada mostra i el valor és el CLIP score
-del primer paràgraf de la seva caption.
-
-Per filtrar: eliminar mostres amb score < threshold (eliminació de mostra
-sencera, no de paràgrafs individuals).
-
-Execució:
-    python compute_clip_scores.py
-    python compute_clip_scores.py --splits train validation
-    python compute_clip_scores.py --batch_size 64
-    python compute_clip_scores.py --force   # recalcula encara que ja existeixi
-"""
-
 import io
 import os
 import json
@@ -41,13 +15,7 @@ OUTPUT_DIR   = "clip_scores"
 CLIP_MODEL   = "openai/clip-vit-base-patch32"
 BATCH_SIZE   = 32
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Utilitats
-# ─────────────────────────────────────────────────────────────────────────────
-
 def get_image(sample):
-    """Retorna la imatge solució de la mostra com a PIL Image RGB."""
     sol_idx = sample["solution_index"]
     if sol_idx < 0:
         sol_idx = 0
@@ -59,19 +27,7 @@ def get_image(sample):
 
 
 def get_first_paragraph(sample):
-    """
-    Retorna el PRIMER PARÀGRAF no buit de la 'previous_panel_caption'.
 
-    Per què el primer paràgraf?
-      Les captions de ComicsPAP solen tenir el primer paràgraf com a
-      descripció general de l'escena (context visual directe), mentre
-      que els paràgrafs posteriors entren en detalls narratius o anàlisi
-      simbòlica menys lligats visualment a la imatge.
-      Usar el primer paràgraf dona un score CLIP més fiable que truncar
-      la caption sencera a 77 tokens de forma arbitrària (versió antiga).
-
-    Retorna '' si la caption és buida o no té paràgrafs.
-    """
     caption = sample.get("previous_panel_caption", "") or ""
     paragraphs = [p.strip() for p in caption.split("\n") if p.strip()]
     return paragraphs[0] if paragraphs else ""
@@ -79,17 +35,14 @@ def get_first_paragraph(sample):
 
 @torch.no_grad()
 def compute_scores_batch(clip_model, clip_processor, device, images, captions):
-    """
-    Calcula la similitud cosinus CLIP per a cada parell (imatge, caption).
-    Retorna una llista de floats.
-    """
+
     inputs = clip_processor(
         text=captions,
         images=images,
         return_tensors="pt",
         padding=True,
         truncation=True,
-        max_length=77          # límit de CLIP
+        max_length=77
     ).to(device)
 
     out      = clip_model(**inputs)
@@ -98,20 +51,9 @@ def compute_scores_batch(clip_model, clip_processor, device, images, captions):
     return (img_norm * txt_norm).sum(dim=-1).cpu().tolist()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Processament d'un split
-# ─────────────────────────────────────────────────────────────────────────────
 
 def process_split(split_name, clip_model, clip_processor, device, batch_size):
-    """
-    Per a cada mostra del split:
-      1. Obté la imatge solució
-      2. Agafa el PRIMER paràgraf de la caption
-      3. Calcula el CLIP score d'aquest paràgraf amb la imatge
-      4. Guarda un sol float per mostra, indexat per sample_id
 
-    Retorna el diccionari complet i imprimeix estadístiques.
-    """
     print(f"\n{'='*55}")
     print(f"  Split: {split_name}")
     print(f"{'='*55}")
@@ -120,14 +62,13 @@ def process_split(split_name, clip_model, clip_processor, device, batch_size):
     n_total    = len(split_data)
     print(f"  Mostres totals: {n_total}")
 
-    scores_dict = {}   # sample_id (str) → float
+    scores_dict = {}   
     errors      = 0
     no_caption  = 0
 
-    # Acumuladors del batch
     batch_images   = []
     batch_captions = []
-    batch_ids      = []   # sample_id de cada entrada del batch
+    batch_ids      = []
 
     def flush_batch():
         if not batch_images:
@@ -147,7 +88,6 @@ def process_split(split_name, clip_model, clip_processor, device, batch_size):
         first_par = get_first_paragraph(sample)
 
         if not first_par:
-            # Mostra sense caption → score 0.0 (eliminada amb qualsevol threshold > 0)
             scores_dict[sid] = 0.0
             no_caption += 1
             continue
@@ -158,7 +98,7 @@ def process_split(split_name, clip_model, clip_processor, device, batch_size):
             errors += 1
             scores_dict[sid] = 0.0
             if errors <= 5:
-                print(f"\n  ⚠️  Error mostra {sid}: {e}")
+                print(f"\n Error mostra {sid}: {e}")
             continue
 
         batch_images.append(image)
@@ -168,10 +108,8 @@ def process_split(split_name, clip_model, clip_processor, device, batch_size):
         if len(batch_images) >= batch_size:
             flush_batch()
 
-    # Últim batch parcial
     flush_batch()
 
-    # ── Estadístiques globals del split ──────────────────────────────────────
     all_scores     = list(scores_dict.values())
     scores_nonzero = [s for s in all_scores if s > 0.0]
     n_nonzero      = len(scores_nonzero)
@@ -199,10 +137,6 @@ def process_split(split_name, clip_model, clip_processor, device, batch_size):
 
     return scores_dict
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser(
@@ -233,13 +167,13 @@ def main():
     clip_model     = CLIPModel.from_pretrained(CLIP_MODEL).to(device)
     clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL)
     clip_model.eval()
-    print("  CLIP carregat ✅")
+    print("  CLIP carregat")
 
     for split in args.splits:
         out_path = os.path.join(args.output_dir, f"clip_scores_{split}.json")
 
         if os.path.exists(out_path) and not args.force:
-            print(f"\n  ⏭️  {out_path} ja existeix → saltant "
+            print(f"\n {out_path} ja existeix → saltant "
                   f"(usa --force per recalcular)")
             continue
 
@@ -249,11 +183,9 @@ def main():
 
         with open(out_path, "w", encoding="utf-8") as f:
             json.dump(scores, f, ensure_ascii=False, indent=2)
-        print(f"\n  ✅ Guardat: {out_path}")
+        print(f"\n Guardat: {out_path}")
 
-    print(f"\n{'='*55}")
-    print("  Fet! Ara pots executar main.py per entrenar.")
-    print(f"{'='*55}\n")
+
 
 
 if __name__ == "__main__":

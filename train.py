@@ -11,18 +11,7 @@ def get_checkpoint_path():
 
 
 def unfreeze_last_layers(model):
-    """
-    Estratègia de descongelació per a ResNet50 + SBERT congelat (recomanació professor).
 
-    ResNet50 (model.resnet és nn.Sequential):
-      [0]=conv1, [1]=bn1, [2]=relu, [3]=maxpool,
-      [4]=layer1, [5]=layer2, [6]=layer3, [7]=layer4, [8]=avgpool
-      Descongelem layer4 (índex 7), els blocs residuals finals.
-
-    SBERT: es manté completament congelat per decisió del professor.
-      Amb SBERT congelat, la projecció de text rep sempre els mateixos
-      embeddings fixos i aprèn a alinear-los amb els d'imatge.
-    """
     sbert_trainable = sum(1 for p in model.sbert.parameters() if p.requires_grad)
     if sbert_trainable == 0:
         print("SBERT completament congelat (recomanació professor)")
@@ -78,7 +67,6 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
         val_metrics = validate_retrieval(model, val_loader, device)
 
-        # Actualitzem millors valors de forma INDEPENDENT per a cada mètrica
         is_best_r1 = val_metrics["R@1"] > best_r1
         if is_best_r1:
             best_r1 = val_metrics["R@1"]
@@ -89,7 +77,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
                 "model":    model.state_dict(),
                 "best_r1":  best_r1,
             }, path)
-            print(f"  ✅ Nou millor model guardat (R@1={best_r1:.4f})")
+            print(f"  Nou millor model guardat (R@1={best_r1:.4f})")
 
         if val_metrics["R@10"] > best_r10:
             best_r10 = val_metrics["R@10"]
@@ -97,27 +85,18 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
         if val_metrics["MRR"] > best_mrr:
             best_mrr = val_metrics["MRR"]
 
-        # ── Log de mètriques per epoch ───────────────────────────────────────
-        # val/R@1, val/R@10, val/MRR → valor ACTUAL d'aquest epoch (corba temporal)
-        # val/best_R@1, val/best_R@10, val/best_MRR → millor vist fins ara (monotònic)
-        #
-        # Separant "current" i "best" en claus diferents evitem que WandB
-        # sobreescrigui el valor actual de la taula amb el màxim històric.
         wandb.log({
             "epoch":             epoch,
             "train/epoch_loss":  epoch_loss / len(loader),
-            # Valors actuals d'aquest epoch (per veure l'evolució temporal)
             "val/R@1":           val_metrics["R@1"],
             "val/R@10":          val_metrics["R@10"],
             "val/MRR":           val_metrics["MRR"],
-            # Millors valors acumulats fins a aquest epoch (monotònics, per al sweep)
             "val/best_R@1":      best_r1,
             "val/best_R@10":     best_r10,
             "val/best_MRR":      best_mrr,
         }, step=batch_ct)
 
-    # Al final del run, escrivim el millor de cada mètrica al summary de WandB.
-    # Això apareix a la taula del sweep com una columna fixa (no l'últim epoch).
+
     wandb.run.summary["val/best_R@1"]  = best_r1
     wandb.run.summary["val/best_R@10"] = best_r10
     wandb.run.summary["val/best_MRR"]  = best_mrr
@@ -126,22 +105,7 @@ def train(model, loader, val_loader, criterion, optimizer, config, device="cuda"
 
 
 def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cuda"):
-    """
-    Un pas d'entrenament amb TripletMarginLoss i in-batch negatives.
 
-    Com funciona el mining dels negatius?
-    ─────────────────────────────────────
-    Concatenem els embeddings de text i imatge en un sol tensor i assignem
-    labels iguals a cada parella (text_i, img_i) → label i.
-
-    pytorch_metric_learning mina automàticament tots els triplets vàlids:
-      - anchor:   text_i  (o img_i)
-      - positive: img_i   (o text_i)  → mateixa label
-      - negative: img_j / text_j amb j≠i → label diferent
-
-    Amb batch size N tenim N-1 negatius disponibles per cada anchor.
-    Amb batch size gran (256, 512) → molts més triplets → millor gradient.
-    """
     model.train()
 
     text_features = {
@@ -156,8 +120,8 @@ def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cu
     N = txt_emb.size(0)
 
     indices    = torch.arange(N, device=device)
-    embeddings = torch.cat([txt_emb, img_emb], dim=0)   # [2N, emb_dim]
-    labels     = torch.cat([indices, indices], dim=0)    # [2N]
+    embeddings = torch.cat([txt_emb, img_emb], dim=0)   
+    labels     = torch.cat([indices, indices], dim=0)    
 
     loss = criterion(embeddings, labels)
 
@@ -168,15 +132,7 @@ def train_batch(images, input_ids, mask, model, optimizer, criterion, device="cu
 
 
 def validate_retrieval(model, loader, device):
-    """
-    Calcula R@1, R@10 i MRR (Mean Reciprocal Rank) sobre el conjunt de validació.
 
-    MRR = mitjana de 1/rank de la imatge correcta per a cada consulta.
-      - Si la imatge correcta és la 1a → contribueix 1.0
-      - Si és la 2a → 0.5, la 3a → 0.33, etc.
-    MRR és sensible a si el model "quasi encerta": un model que sempre posa
-    la solució en posició 2 tindrà MRR≈0.5 però R@1=0. Complementa R@K.
-    """
     model.eval()
     all_txt, all_img = [], []
 

@@ -1,25 +1,3 @@
-"""
-analyse_captions_v2.py
-======================
-Analitza la importància de cada paràgraf del 'previous_panel_caption'
-usant CLIP Score (relació visual) i SBERT (redundància semàntica).
-
-Fusió de didac.py + analyse_captions.py amb millores:
-  - Gràfiques matplotlib per split + comparativa global  (plots/)
-  - Fitxers d'eliminats en JSON i CSV                   (eliminats/)
-  - Resum ASCII al terminal (idèntic al comportament original)
-  - Gestió robust d'errors i progress bar millorada
-  - Suport per a --dry_run (només terminal, sense guardar res)
-  - Logging configurable
-
-Execució:
-    python analyse_captions_v2.py
-    python analyse_captions_v2.py --splits validation
-    python analyse_captions_v2.py --splits train validation test --n_mostres 200
-    python analyse_captions_v2.py --clip_thr 0.22 --sbert_thr 0.80
-    python analyse_captions_v2.py --output_dir resultats_analisi
-    python analyse_captions_v2.py --dry_run          # sense guardar res (mode didac)
-"""
 
 import io
 import re
@@ -36,44 +14,40 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import matplotlib
-matplotlib.use("Agg")   # backend sense finestra, per guardar a fitxer
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
-# ── Path del projecte ────────────────────────────────────────────────────────
 script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-print("🔄 Carregant llibreries...", flush=True)
+print("Carregant llibreries...", flush=True)
 
 from datasets import load_dataset
-print("  ✅ datasets", flush=True)
+print("datasets", flush=True)
 
 from transformers import CLIPProcessor, CLIPModel
-print("  ✅ transformers (CLIP)", flush=True)
+print("transformers (CLIP)", flush=True)
 
 from sentence_transformers import SentenceTransformer
-print("  ✅ sentence_transformers", flush=True)
+print("sentence_transformers", flush=True)
 
 from sklearn.metrics.pairwise import cosine_similarity
-print("  ✅ sklearn", flush=True)
+print("sklearn", flush=True)
 
 from PIL import Image
-print("  ✅ PIL", flush=True)
+print("PIL", flush=True)
 
-print("✅ Totes les llibreries carregades!\n", flush=True)
+print("Totes les llibreries carregades!\n", flush=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Configuració per defecte
-# ─────────────────────────────────────────────────────────────────────────────
 DATASET_PATH    = "/home/datasets/COMIC-PAP/datasets/VLR-CVC___comics_pap"
 DATASET_NAME    = "default"
 CLIP_THRESHOLD  = 0.22
 SBERT_THRESHOLD = 0.85
 ALL_SPLITS      = ["train", "validation", "test"]
-MAX_POS         = 8   # màxim de posicions de paràgraf als gràfics
+MAX_POS         = 8
 
 COLORS = {
     "train":      "#4C72B0",
@@ -82,9 +56,6 @@ COLORS = {
     "global":     "#8172B2",
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Logger
-# ─────────────────────────────────────────────────────────────────────────────
 
 def setup_logger(out_dir: Path | None = None) -> logging.Logger:
     logger = logging.getLogger("analyse_captions")
@@ -104,17 +75,12 @@ def setup_logger(out_dir: Path | None = None) -> logging.Logger:
     return logger
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Funcions de càlcul
-# ─────────────────────────────────────────────────────────────────────────────
 
 def split_paragraphs(text: str) -> list[str]:
-    """Divideix el text en paràgrafs no buits."""
     return [p.strip() for p in re.split(r'\n{2,}|\n', text) if p.strip()]
 
 
 def get_correct_image(sample) -> Image.Image:
-    """Retorna la imatge correcta (solution_index) com a PIL.Image RGB."""
     sol_idx = max(sample["solution_index"], 0)
     img = sample["options"][sol_idx]
     if isinstance(img, bytes):
@@ -127,10 +93,6 @@ def get_correct_image(sample) -> Image.Image:
 @torch.no_grad()
 def compute_clip_scores(clip_model, clip_processor, device,
                         image: Image.Image, paragraphs: list[str]) -> list[float]:
-    """
-    Calcula el CLIP Score (cosinus) entre la imatge i cada paràgraf.
-    Trunca a 300 caràcters + 77 tokens per evitar warnings de CLIP.
-    """
     truncated = [p[:300] for p in paragraphs]
     inputs = clip_processor(
         text=truncated,
@@ -148,11 +110,6 @@ def compute_clip_scores(clip_model, clip_processor, device,
 
 def compute_sbert_redundancy(sbert_model, paragraphs: list[str],
                               clip_scores_list: list[float]) -> tuple[list[float], int]:
-    """
-    Per cada paràgraf Pi, la redundància és la similitud cosinus màxima
-    que té amb QUALSEVOL ALTRE paràgraf (detecció de redundància global).
-    Retorna (redundancies, ref_idx) on ref_idx és el paràgraf amb CLIP màxim.
-    """
     if len(paragraphs) == 1:
         return [0.0], 0
     ref_idx    = int(np.argmax(clip_scores_list))
@@ -168,21 +125,12 @@ def compute_sbert_redundancy(sbert_model, paragraphs: list[str],
 def filter_paragraphs(c_scores: list[float], s_scores: list[float],
                       ref_idx: int, clip_thr: float,
                       sbert_thr: float) -> list[int]:
-    """
-    Manté el paràgraf de referència (CLIP màxim) sempre.
-    La resta: mantenir si CLIP >= clip_thr  I  SBERT <= sbert_thr.
-    Si no queda res, retorna [ref_idx].
-    """
     keep = [
         j for j, (c, s) in enumerate(zip(c_scores, s_scores))
         if j == ref_idx or (c >= clip_thr and s <= sbert_thr)
     ]
     return keep if keep else [ref_idx]
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Acumulador d'estadístiques
-# ─────────────────────────────────────────────────────────────────────────────
 
 def nou_acumulador(splits: list[str]) -> dict:
     return {
@@ -203,20 +151,11 @@ def nou_acumulador(splits: list[str]) -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Processament d'un split
-# ─────────────────────────────────────────────────────────────────────────────
-
 def processar_split(split_name: str, split_data,
                     clip_model, clip_processor, sbert_model, device,
                     acum: dict, clip_thr: float, sbert_thr: float,
                     n_mostres: int | None,
                     logger: logging.Logger) -> list[dict]:
-    """
-    Processa un split sencer i retorna la llista de paràgrafs a eliminar.
-    Cada entrada de la llista té: sample_id, split, total_paragraphs,
-    kept_paragraphs, removed_paragraphs (llista de dicts amb detall).
-    """
     total    = min(n_mostres, len(split_data)) if n_mostres else len(split_data)
     iterador = split_data.select(range(total)) if n_mostres else split_data
     errors   = 0
@@ -244,7 +183,6 @@ def processar_split(split_name: str, split_data,
             keep_set          = set(keep)
             n_elim            = len(paragraphs) - len(keep)
 
-            # ── Estadístiques globals ───────────────────────────────────────
             acum["mostres"]         += 1
             acum["total_par"]       += len(paragraphs)
             acum["total_conservar"] += len(keep)
@@ -267,7 +205,6 @@ def processar_split(split_name: str, split_data,
                 if pos != ref_idx:
                     acum["sbert_per_pos"][pos].append(s)
 
-            # ── Registrar paràgrafs a eliminar ─────────────────────────────
             if n_elim > 0:
                 removed = []
                 for j in range(len(paragraphs)):
@@ -305,17 +242,12 @@ def processar_split(split_name: str, split_data,
     return eliminats_split
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Guardat de resultats (JSON + CSV)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def desar_eliminats(tots_eliminats: list[dict], out_dir: Path,
                     clip_thr: float, sbert_thr: float) -> None:
     """Guarda els paràgrafs a eliminar en JSON i CSV."""
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    # ── JSON ──────────────────────────────────────────────────────────────────
     meta = {
         "generated_at":               ts,
         "clip_threshold":             clip_thr,
@@ -329,9 +261,8 @@ def desar_eliminats(tots_eliminats: list[dict], out_dir: Path,
     json_path = out_dir / "paragraphs_to_remove.json"
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
-    print(f"  💾 JSON guardat: {json_path}")
+    print(f"JSON guardat: {json_path}")
 
-    # ── CSV ───────────────────────────────────────────────────────────────────
     csv_path = out_dir / "paragraphs_to_remove.csv"
     fieldnames = ["split", "sample_id", "total_paragraphs", "kept_paragraphs",
                   "paragraph_index", "clip_score", "sbert_score", "reason", "text"]
@@ -351,12 +282,7 @@ def desar_eliminats(tots_eliminats: list[dict], out_dir: Path,
                     "reason":           p["reason"],
                     "text":             p["text"].replace("\n", " "),
                 })
-    print(f"  💾 CSV  guardat: {csv_path}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Gràfiques matplotlib
-# ─────────────────────────────────────────────────────────────────────────────
+    print(f"CSV  guardat: {csv_path}")
 
 def _posicions_valides(data_per_pos: list[list]) -> tuple[list[int], list[float], list[float]]:
     positions, means, stds = [], [], []
@@ -371,7 +297,6 @@ def _posicions_valides(data_per_pos: list[list]) -> tuple[list[int], list[float]
 def generar_grafic_split(split_name: str, acum: dict,
                          clip_thr: float, sbert_thr: float,
                          out_dir: Path) -> None:
-    """Genera i guarda un PNG amb 4 subgràfiques per al split donat."""
     color = COLORS.get(split_name, "#333333")
     fig   = plt.figure(figsize=(16, 12))
     fig.suptitle(
@@ -387,7 +312,6 @@ def generar_grafic_split(split_name: str, acum: dict,
     n_conserva = st.get("conservar", 0)
     n_elim     = st.get("eliminar", 0)
 
-    # ── 1. CLIP Score mitjà per posició ──────────────────────────────────────
     ax1 = fig.add_subplot(gs[0, 0])
     positions, means, stds = _posicions_valides(acum["clip_per_pos"])
     if positions:
@@ -409,7 +333,6 @@ def generar_grafic_split(split_name: str, acum: dict,
             ax1.text(p, m + max(means) * 0.02, f"{m:.3f}",
                      ha="center", va="bottom", fontsize=8)
 
-    # ── 2. SBERT Redundància per posició ─────────────────────────────────────
     ax2 = fig.add_subplot(gs[0, 1])
     positions_s, means_s, stds_s = _posicions_valides(acum["sbert_per_pos"])
     if positions_s:
@@ -431,7 +354,6 @@ def generar_grafic_split(split_name: str, acum: dict,
         for p, m in zip([f"P{p}" for p in positions_s], means_s):
             ax2.text(p, m + 0.015, f"{m:.3f}", ha="center", va="bottom", fontsize=8)
 
-    # ── 3. % eliminats per posició ────────────────────────────────────────────
     ax3 = fig.add_subplot(gs[1, 0])
     pos_elim, pcts, labels_elim = [], [], []
     for pos in range(MAX_POS):
@@ -455,7 +377,6 @@ def generar_grafic_split(split_name: str, acum: dict,
             ax3.text(pos, pct + 2, f"{pct:.1f}%\n({lab})",
                      ha="center", va="bottom", fontsize=8)
 
-    # ── 4. Resum numèric com a text ───────────────────────────────────────────
     ax4 = fig.add_subplot(gs[1, 1])
     ax4.axis("off")
     pct_elim = 100 * n_elim     / n_par      if n_par      else 0
@@ -463,21 +384,20 @@ def generar_grafic_split(split_name: str, acum: dict,
     only     = acum["only_ref"]
     pct_only = 100 * only / n_mostres if n_mostres else 0
 
-    # Indicador visual del resultat del filtratge
     if pct_elim > 40:
-        estat = "⚠️  Threshold massa AGRESSIU"
+        estat = "Threshold massa AGRESSIU"
     elif pct_elim < 10:
-        estat = "⚠️  Threshold massa PERMISSIU"
+        estat = "Threshold massa PERMISSIU"
     else:
-        estat = "✅ Threshold en rang ideal"
+        estat = "Threshold en rang ideal"
 
     resum_lines = [
         f"Split:           {split_name}",
         f"Mostres:         {n_mostres:,}",
         f"Total paràgrafs: {n_par:,}",
         "",
-        f"✅ Conservats:   {n_conserva:,}  ({pct_cons:.1f}%)",
-        f"🗑  Eliminats:   {n_elim:,}  ({pct_elim:.1f}%)",
+        f"Conservats:   {n_conserva:,}  ({pct_cons:.1f}%)",
+        f"Eliminats:   {n_elim:,}  ({pct_elim:.1f}%)",
         "",
         f"Mostres amb sols 1 paràgraf: {only} ({pct_only:.1f}%)",
         "",
@@ -503,13 +423,12 @@ def generar_grafic_split(split_name: str, acum: dict,
     out_path = out_dir / f"grafiques_{split_name}.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  📊 Gràfica guardada: {out_path}")
+    print(f"Gràfica guardada: {out_path}")
 
 
 def generar_grafic_global(splits: list[str], acum: dict,
                           clip_thr: float, sbert_thr: float,
                           out_dir: Path) -> None:
-    """Gràfica comparativa de tots els splits en un sol PNG."""
     fig, axes = plt.subplots(1, 3, figsize=(18, 6))
     fig.suptitle(
         f"Comparativa entre splits  —  CLIP thr={clip_thr} | SBERT thr={sbert_thr}",
@@ -561,12 +480,7 @@ def generar_grafic_global(splits: list[str], acum: dict,
     out_path = out_dir / "grafiques_global.png"
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print(f"  📊 Gràfica global guardada: {out_path}")
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Resum ASCII al terminal (comportament original de didac.py)
-# ─────────────────────────────────────────────────────────────────────────────
+    print(f"Gràfica global guardada: {out_path}")
 
 def barra_ascii(valor: float, maxim: float, amplada: int = 30, char: str = "█") -> str:
     n = int(round(valor / maxim * amplada)) if maxim > 0 else 0
@@ -649,10 +563,6 @@ def imprimir_resum_terminal(acum: dict, splits: list[str],
     print(f"{sep}\n")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Entry point
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     parser = argparse.ArgumentParser(
         description="Anàlisi CLIP+SBERT de captions — fusió didac + analyse (v2)"
@@ -672,7 +582,6 @@ def main():
                         help="Només mostra el resum ASCII, sense guardar res a disc")
     args = parser.parse_args()
 
-    # Normalitzar 'val' → 'validation'
     args.splits = ["validation" if s == "val" else s for s in args.splits]
 
     out_root  = Path(args.output_dir)
@@ -692,24 +601,22 @@ def main():
     else:
         logger.info("Mode dry_run: no es guardarà res a disc.")
 
-    # ── Carregar models ───────────────────────────────────────────────────────
-    print("\n📦 [1/2] Carregant CLIP (openai/clip-vit-base-patch32)...", flush=True)
+    print("\n[1/2] Carregant CLIP (openai/clip-vit-base-patch32)...", flush=True)
     clip_model     = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     clip_model.eval()
-    print("  ✅ CLIP carregat\n", flush=True)
+    print("CLIP carregat\n", flush=True)
 
-    print("📦 [2/2] Carregant SBERT (all-MiniLM-L6-v2)...", flush=True)
+    print("[2/2] Carregant SBERT (all-MiniLM-L6-v2)...", flush=True)
     sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=str(device))
-    print("  ✅ SBERT carregat\n", flush=True)
+    print("SBERT carregat\n", flush=True)
 
-    # ── Processar splits ──────────────────────────────────────────────────────
     acum           = nou_acumulador(args.splits)
     tots_eliminats = []
 
     for split_name in args.splits:
         print(f"\n{'═'*60}", flush=True)
-        print(f"📂 Carregant split '{split_name}'...", flush=True)
+        print(f"Carregant split '{split_name}'...", flush=True)
         try:
             split_data = load_dataset(
                 args.dataset_path, args.dataset_name, split=split_name
@@ -719,7 +626,7 @@ def main():
             logger.error("Comprova el path i el nom de la configuració.")
             continue
 
-        print(f"  ✅ {len(split_data)} mostres carregades", flush=True)
+        print(f"{len(split_data)} mostres carregades", flush=True)
 
         eliminats_split = processar_split(
             split_name, split_data,
@@ -728,34 +635,30 @@ def main():
         )
         tots_eliminats.extend(eliminats_split)
 
-        # Gràfica individual per a aquest split (si no és dry_run)
         if not args.dry_run:
-            print(f"\n📊 Generant gràfica per al split '{split_name}'...", flush=True)
+            print(f"\nGenerant gràfica per al split '{split_name}'...", flush=True)
             generar_grafic_split(split_name, acum,
                                  args.clip_thr, args.sbert_thr, plots_dir)
 
-    # ── Gràfica comparativa global ────────────────────────────────────────────
     if not args.dry_run and len(args.splits) > 1:
-        print(f"\n📊 Generant gràfica comparativa global...", flush=True)
+        print(f"\nGenerant gràfica comparativa global...", flush=True)
         generar_grafic_global(args.splits, acum,
                               args.clip_thr, args.sbert_thr, plots_dir)
 
-    # ── Guardar paràgrafs a eliminar ──────────────────────────────────────────
     if not args.dry_run:
-        print(f"\n💾 Desant fitxers d'eliminats...", flush=True)
+        print(f"\nDesant fitxers d'eliminats...", flush=True)
         desar_eliminats(tots_eliminats, elim_dir, args.clip_thr, args.sbert_thr)
 
-    # ── Resum ASCII al terminal ───────────────────────────────────────────────
     imprimir_resum_terminal(acum, args.splits, args.clip_thr, args.sbert_thr)
 
     if not args.dry_run:
-        print(f"\n✅ Tot completat. Resultats a: {out_root.resolve()}")
+        print(f"\nTot completat. Resultats a: {out_root.resolve()}")
         print(f"   {plots_dir}/grafiques_<split>.png   → gràfiques matplotlib")
         print(f"   {elim_dir}/paragraphs_to_remove.json → dades per netejar el dataset")
         print(f"   {elim_dir}/paragraphs_to_remove.csv  → versió llegible")
         print(f"   {out_root}/analyse.log               → log complet\n")
     else:
-        print("\n✅ Anàlisi completada (dry_run: cap fitxer guardat).\n")
+        print("\nAnàlisi completada (dry_run: cap fitxer guardat).\n")
 
 
 if __name__ == "__main__":

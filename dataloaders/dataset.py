@@ -7,25 +7,6 @@ from PIL import Image
 
 
 class ComicsPAPDataset(Dataset):
-    """
-    Dataset Comics-PAP per a cross-modal retrieval text-imatge.
-
-    Filtratge per CLIP score (opcional):
-      Els CLIP scores es precalculen amb compute_clip_scores.py i es guarden
-      a clip_scores/clip_scores_{split}.json amb format:
-
-          { "dhgd1kfamu": 0.2341, "xk92mapldf": 0.1823, ... }
-
-      La clau és el 'sample_id' de cada mostra i el valor és el CLIP score
-      del PRIMER PARÀGRAF de la seva caption.
-
-      Si clip_threshold > 0, s'eliminen les mostres amb score < threshold.
-      Això redueix el dataset però garanteix que totes les parelles
-      text-imatge que queden estan ben alineades semànticament.
-
-      Si clip_scores_path és None o clip_threshold == 0, s'usa el dataset
-      complet sense filtrar.
-    """
 
     def __init__(self, hf_dataset, tokenizer, max_length=128,
                  clip_scores_path=None, clip_threshold=0.0):
@@ -39,11 +20,9 @@ class ComicsPAPDataset(Dataset):
                         std=[0.229, 0.224, 0.225])
         ])
 
-        # Filtratge per CLIP score: elimina mostres senceres
         if clip_scores_path and os.path.exists(clip_scores_path) and clip_threshold > 0.0:
             with open(clip_scores_path, encoding="utf-8") as f:
                 clip_scores = json.load(f)
-            # Filtrem per sample_id (clau del JSON)
             self.valid_indices = [
                 i for i in range(len(hf_dataset))
                 if float(clip_scores.get(hf_dataset[i]["sample_id"], 1.0)) >= clip_threshold

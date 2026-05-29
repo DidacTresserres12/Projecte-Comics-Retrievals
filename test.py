@@ -15,21 +15,9 @@ if root_path not in sys.path:
 from models.models import Baseline
 
 
-# ─────────────────────────────────────────────
-# Càrrega del model
-# ─────────────────────────────────────────────
+
 def load_model(model_path, embedding_dim=512, device="cpu"):
-    """
-    Carrega un model Baseline (SentenceBERT + ResNet50) entrenat prèviament.
 
-    Args:
-        model_path:    ruta al fitxer .pth
-        embedding_dim: dimensió de l'espai d'embedding (ha de coincidir amb l'entrenament)
-        device:        'cuda' o 'cpu'
-
-    Returns:
-        model en mode eval, llest per fer inferència
-    """
     model = Baseline(embedding_dim=embedding_dim).to(device)
     state_dict = torch.load(model_path, map_location=device)
     model.load_state_dict(state_dict)
@@ -38,17 +26,8 @@ def load_model(model_path, embedding_dim=512, device="cpu"):
     return model
 
 
-# ─────────────────────────────────────────────
-# Avaluació completa del dataset (R@1, R@5, R@10)
-# ─────────────────────────────────────────────
 def test(model, test_loader, device="cuda", log_wandb=False):
-    """
-    Avalua el model sobre el conjunt de test.
-    Calcula R@1, R@5 i R@10 (text-to-image retrieval).
 
-    Nota: durant l'avaluació no necessitem 'image_neg' (el hard negative
-    s'usa només durant l'entrenament amb la QuadrupletLoss).
-    """
     model.eval()
     all_txt, all_img = [], []
 
@@ -65,11 +44,10 @@ def test(model, test_loader, device="cuda", log_wandb=False):
             all_txt.append(txt_emb)
             all_img.append(img_emb)
 
-    txts = torch.cat(all_txt)   # [N, embedding_dim]
-    imgs = torch.cat(all_img)   # [N, embedding_dim]
+    txts = torch.cat(all_txt)   
+    imgs = torch.cat(all_img)   
 
-    # Matriu de similitud cosinus [N, N]
-    # (embeddings ja normalitzats L2 → producte escalar = cosinus)
+
     sim = torch.matmul(txts, imgs.t())
 
     ground_truth = torch.arange(len(txts), device=device).view(-1, 1)
@@ -89,18 +67,8 @@ def test(model, test_loader, device="cuda", log_wandb=False):
 
     return {"R@1": r1, "R@5": r5, "R@10": r10}
 
-
-# ─────────────────────────────────────────────
-# Mode demo: exemple individual
-# ─────────────────────────────────────────────
 def demo(model, image_path, texts, device="cpu"):
-    """
-    Donat una imatge i una llista de textos candidats,
-    mostra la similitud de cada text amb la imatge.
 
-    Exemple d'ús:
-        demo(model, "panel.jpg", ["A hero fights", "A dog sleeps"])
-    """
     transform = T.Compose([
         T.Resize((224, 224)),
         T.ToTensor(),
@@ -110,7 +78,6 @@ def demo(model, image_path, texts, device="cpu"):
     image = Image.open(image_path).convert("RGB")
     image_tensor = transform(image).unsqueeze(0).to(device)
 
-    # Tokenitzem amb el tokenitzador de SentenceBERT (ara model.sbert_tokenizer)
     encoding = model.sbert_tokenizer(
         texts,
         padding="max_length",
@@ -140,10 +107,6 @@ def demo(model, image_path, texts, device="cpu"):
 
     return {text: sim.item() for text, sim in zip(texts, similarities)}
 
-
-# ─────────────────────────────────────────────
-# Punt d'entrada
-# ─────────────────────────────────────────────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Test i demo del model Comics Retrieval")
 

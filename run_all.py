@@ -1,18 +1,4 @@
-"""
-run_all.py
-==========
-Script mestre que executa tot en ordre:
-  1. Calcula els CLIP scores per train, validation i test (si no existeixen)
-  2. Llança el sweep de WandB amb el model SBERT + ResNet50 + TripletLoss
 
-Execució en segon pla (deixar tota la nit):
-    export WANDB_DIR=/tmp
-    nohup python run_all.py > run_all.log 2>&1 &
-    tail -f run_all.log
-
-Per matar-ho si cal:
-    kill $(pgrep -f run_all.py)
-"""
 
 import io
 import os
@@ -37,10 +23,6 @@ def log(msg):
     ts = datetime.datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}", flush=True)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PAS 1: Càlcul de CLIP scores
-# ─────────────────────────────────────────────────────────────────────────────
 
 def get_image(sample):
     from PIL import Image
@@ -81,10 +63,9 @@ def compute_clip_scores_for_split(split_name, clip_model, clip_processor,
     total  = len(data)
     log(f"  {total} mostres")
 
-    # Prova la primera mostra
     img0, cap0 = get_image(data[0]), str(data[0].get("previous_panel_caption","") or "")
     s0 = compute_scores_batch(clip_model, clip_processor, device, [img0], [cap0[:200]])[0]
-    log(f"  ✅ Score de prova (mostra 0): {s0:.4f} {'⚠️ MES BAIX DE L ESPERAT' if s0 < 0.05 else '(OK)'}")
+    log(f" Score de prova (mostra 0): {s0:.4f} {'MES BAIX DE L ESPERAT' if s0 < 0.05 else '(OK)'}")
 
     scores_dict    = {}
     images_batch   = []
@@ -104,7 +85,7 @@ def compute_clip_scores_for_split(split_name, clip_model, clip_processor,
             errors += 1
             scores_dict[str(i)] = 0.0
             if errors <= 3:
-                log(f"  ⚠️ Error mostra {i}: {e}")
+                log(f"  Error mostra {i}: {e}")
             continue
 
         if len(images_batch) >= batch_size:
@@ -114,7 +95,6 @@ def compute_clip_scores_for_split(split_name, clip_model, clip_processor,
                 scores_dict[str(idx)] = round(float(sc), 4)
             images_batch = []; captions_batch = []; indices_batch = []
 
-        # Print progrés cada 500 mostres
         if (i + 1) % 500 == 0:
             elapsed  = time.time() - t_start
             pct      = 100 * (i + 1) / total
@@ -124,14 +104,12 @@ def compute_clip_scores_for_split(split_name, clip_model, clip_processor,
             mean_sc  = sum(vals_so_far) / len(vals_so_far) if vals_so_far else 0
             log(f"  [{pct:5.1f}%] {i+1}/{total} — score mitjà fins ara: {mean_sc:.4f} — ETA: {eta_min:.0f} min")
 
-    # Últim batch
     if images_batch:
         scores = compute_scores_batch(clip_model, clip_processor, device,
                                       images_batch, captions_batch)
         for idx, sc in zip(indices_batch, scores):
             scores_dict[str(idx)] = round(float(sc), 4)
 
-    # Estadístiques finals
     vals = [v for v in scores_dict.values() if v > 0]
     if vals:
         log(f"  Estadístiques '{split_name}':")
@@ -141,11 +119,10 @@ def compute_clip_scores_for_split(split_name, clip_model, clip_processor,
             count = sum(1 for v in vals if v < thr)
             log(f"    < {thr:.2f}: {count} mostres ({100*count/len(vals):.1f}%)")
 
-    # Guardar
     os.makedirs(CLIP_SCORES_DIR, exist_ok=True)
     with open(out_path, "w") as f:
         json.dump(scores_dict, f)
-    log(f"  ✅ Scores guardats a: {out_path}")
+    log(f"  Scores guardats a: {out_path}")
     return out_path
 
 
@@ -160,15 +137,14 @@ def step1_clip_scores(device, batch_size=32, force=False):
         if force or not os.path.exists(path):
             splits_needed.append(split)
         else:
-            # Comprova que no siguin tots 0
             with open(path) as f:
                 data = json.load(f)
             nonzero = sum(1 for v in data.values() if float(v) > 0)
             if nonzero == 0:
-                log(f"  ⚠️  {path} té tots els scores a 0 → recalculant")
+                log(f"   {path} té tots els scores a 0 → recalculant")
                 splits_needed.append(split)
             else:
-                log(f"  ✅ {path} ja existeix ({nonzero} scores no-zero) → saltant")
+                log(f"  {path} ja existeix ({nonzero} scores no-zero) → saltant")
 
     if not splits_needed:
         log("  Tots els CLIP scores ja calculats correctament.")
@@ -179,22 +155,18 @@ def step1_clip_scores(device, batch_size=32, force=False):
     clip_model     = CLIPModel.from_pretrained("openai/clip-vit-base-patch32").to(device)
     clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     clip_model.eval()
-    log("  ✅ CLIP carregat")
+    log("  CLIP carregat")
 
     for split in splits_needed:
         log(f"\n  — Processant split: {split} —")
         compute_clip_scores_for_split(split, clip_model, clip_processor,
                                        device, batch_size)
 
-    # Alliberar memòria GPU abans del sweep
     del clip_model
     torch.cuda.empty_cache()
-    log("\n  ✅ PAS 1 COMPLETAT. Memòria GPU alliberada.")
+    log("\n  PAS 1 COMPLETAT. Memòria GPU alliberada.")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PAS 2: Sweep WandB
-# ─────────────────────────────────────────────────────────────────────────────
 
 def step2_sweep(device):
     import wandb
@@ -228,7 +200,7 @@ def step2_sweep(device):
         }
     }
 
-    best_r1_global = [0.0]  # llista per poder modificar dins del closure
+    best_r1_global = [0.0] 
 
     def model_pipeline():
         with wandb.init() as run:
@@ -262,11 +234,6 @@ def step2_sweep(device):
     log(f"  Sweep creat: {sweep_id}")
     log(f"  Veieu el progrés a: https://wandb.ai/javiermartinez18-universitat-aut-noma-de-barcelona/Comics-Retrieval-millores")
     wandb.agent(sweep_id, function=model_pipeline, count=30)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
-# ─────────────────────────────────────────────────────────────────────────────
 
 def main():
     parser = argparse.ArgumentParser()
