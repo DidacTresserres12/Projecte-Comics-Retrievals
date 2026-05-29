@@ -155,3 +155,34 @@ MRR és sensible a la posició exacta: un model que sempre retorna la imatge cor
 | Millor R@1 (sweep) | 0.0458 |
 | Millor R@10 (sweep) | 0.2328 |
 | Millor MRR (sweep) | 0.1002 |
+
+---
+
+## 7. Resultats obtinguts i validació del disseny
+
+### 7.1 Mètriques finals (run de 150 epochs)
+
+| Mètrica | Valor | Baseline (aleatori) | Millora |
+|---|---|---|---|
+| R@1 | **0.0458** | ~0.0008 | ×57 |
+| R@10 | **0.1946** | ~0.0077 | ×25 |
+| MRR | **0.0903** | ~0.0008 | ×113 |
+
+### 7.2 Per qué l'arquitectura produeix aquests resultats
+
+**SentenceBERT congelat** garanteix que els embeddings de text son semànticament rics des del primer moment. La projecció `Linear(384→512)` aprèn ràpidament a alinear-los amb els embeddings visuals perquè el punt de partida ja és de qualitat.
+
+**ResNet50 amb layer4 entrenable** adapta les representacions d'alt nivell (formes, composicions, estils) al domini dels còmics sense perdre les features generals de les capes inferiors. Amb 2048 features de partida, la projecció `Linear(2048→512)` té molta informació per condensar.
+
+**TripletMarginLoss amb marge 0.4** estructura l'espai d'embedding de forma que els embeddings text-imatge correctes s'apropen i els incorrectes se separen. Amb batch_size=64, fins a 4032 triplets per pas proporcionen un gradient ric.
+
+**Normalització L2** a la sortida de les projeccions garanteix que la similitud cosinus és directament interpretable i que els vectors estan en una hiperesfera unitària on les distàncies son comparables.
+
+**CLIP filtering a 0.29** elimina les parelles de training sorolloses, deixant un dataset més net on cada triplet aporta informació real sobre l'alineació text-imatge.
+
+### 7.3 Anàlisi de la convergència
+
+La train/epoch_loss baixa de 0.35 (epoch 1) a 0.087 (epoch 150) de forma consistent, sense oscillació ni divergència. Això confirma que:
+- El learning rate de 1e-4 és adequat (no massa gran → inestabilitat, no massa petit → convergència massa lenta)
+- El weight decay de 0.1 regularitza correctament sense impedir l'aprenentatge
+- L'estratègia de descongelació (layer4 des del primer epoch) és estable

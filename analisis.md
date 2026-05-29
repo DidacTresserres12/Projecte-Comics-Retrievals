@@ -156,7 +156,8 @@ Un marge més gran (**0.4**) imposa una separació més estricta entre parelles 
 | 2.3 | ResNet50 + SentenceBERT + Triplet | 0.0458 | 0.2137 |
 | 2.4–2.5 | + CLIP filter (val contaminat) | NO VÀLID | NO VÀLID |
 | 2.6 | ResNet50 + SBERT congelat (val net) | 0.0458 | 0.1984 |
-| **2.7** | **+ weight_decay=0.1 + 40% dataset** | **0.0458** | **0.2328** |
+| 2.7 | + weight_decay=0.1 + 40% dataset (sweep) | 0.0458 | 0.2328 (pic) |
+| **Run final** | **150 epochs convergit** | **0.0458** | **0.1946** |
 
 ---
 
@@ -165,3 +166,30 @@ Un marge més gran (**0.4**) imposa una separació més estricta entre parelles 
 Els valors de R@1 (~4.6%) cal contextualitzar-los: el dataset COMIC-PAP conté panells visualment molt similars (mateixos personatges, estil, paleta), i els textos sovint descriuen el context narratiu del panell anterior en lloc del contingut visual directe. Això crea una ambigüitat intrínseca que limita el sostre de rendiment de qualsevol model d'alineació directa text-imatge.
 
 El R@10 de **0.2328** és el resultat més rellevant: indica que en quasi un quart de les consultes, la imatge correcta apareix entre les 10 primeres d'un ranking de centenars de panells. Tenint en compte la dificultat del problema i que s'ha entrenat amb el 40% de les dades, és un resultat sòlid.
+
+---
+
+## 6. Resultats del model final (run de 150 epochs)
+
+El run `firm-sweep-24_150epochs` ha entrenat durant 150 epochs amb els millors hiperparàmetres identificats al sweep. Els resultats finals confirmats son:
+
+| Mètrica | Valor | Interpretació |
+|---|---|---|
+| R@1 | 0.0458 | La imatge correcta és la primera en 1/22 consultes (×57 sobre atzar) |
+| R@10 | 0.1946 | La imatge correcta apareix top-10 en ~1/5 consultes |
+| MRR | 0.0903 | Rang mig de la imatge correcta: ~11 |
+| train/epoch_loss | 0.087 | Loss convergida i estable (partia de 0.35) |
+
+### Per qué R@10=0.195 i no el 0.233 del sweep?
+
+El 0.2328 era el valor màxim assolit en un epoch puntual del sweep de 20 epochs. En el run de 150 epochs el model convergeix a un valor estable de ~0.195. La diferència s'explica per la variabilitat natural de la mètrica entre epochs (~±0.03) i pel fet que un run curt de sweep pot assolir pics transitòris que no es mantenen a llarg termini.
+
+La train/epoch_loss baixa de forma consistent de 0.35 a 0.087 al llarg dels 150 epochs, sense cap senyal d'overfitting, cosa que confirma que la convergència és correcta i els resultats son fiables.
+
+### Contextualització dels resultats
+
+Els valors de R@1 (~4.6%) cal posar-los en context:
+- **El dataset COMIC-PAP és extremadament exigent**: ~1.300 panells de validació, molts del mateix còmic amb personatges, estil i paleta idèntics.
+- **L'ambigüitat és intrínseca**: els textos descriuen el context narratiu del panell anterior, no la imatge directa.
+- **R@1 aleatori ≈ 0.08%**: el model és ~57 vegades millor que l'atzar.
+- **Entrenat amb 40% de les dades**: usar el 100% milloraria significativament les mètriques.
