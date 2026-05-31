@@ -9,7 +9,7 @@ Les mètriques principals utilitzades son:
 - **R@10**: proporció de consultes on la imatge correcta apareix entre les 10 primeres.
 - **MRR (Mean Reciprocal Rank)**: mitjana de 1/rank de la imatge correcta. Captura si el model "quasi encerta" (és sensible a posicions 2 i 3, que R@1 no veu).
 
-S'han executat un total de **~150 runs** distribuïts en diverses configuracions d'arquitectura, amb cerca Bayesiana d'hiperparàmetres (WandB Sweeps) i Hyperband Early Stopping per aturar els runs clarament inferiors.
+S'han executat un total de **~450 runs** distribuïts en diverses configuracions d'arquitectura, amb cerca Bayesiana d'hiperparàmetres (WandB Sweeps) i Hyperband Early Stopping per aturar els runs clarament inferiors.
 
 ---
 
@@ -17,9 +17,9 @@ S'han executat un total de **~150 runs** distribuïts en diverses configuracions
 
 ### 2.1 Model inicial: ResNet18 + BERT + CrossEntropyLoss (Codi del Carles)
 
-La primera implementació partia del codi base proporcionat pel Carles, que combinava **BERT** (`bert-base-uncased`) com a encoder de text i **ResNet18** com a encoder d'imatge, amb **CrossEntropyLoss** com a funció de pèrdua.
+La primera implementació partia del codi base proporcionat pel Carles, que combinava **BERT** com a encoder de text i **ResNet18** com a encoder d'imatge, amb **CrossEntropyLoss** com a funció de pèrdua.
 
-En les primeres execucions, les mètriques R@1 i R@10 sortien sempre a zero o amb valors completament aleatoris. Després d'una anàlisi exhaustiva del pipeline, vam detectar que el problema no era l'arquitectura sinó la **càrrega del dataset**: les imatges s'estaven llegint com a imatges negres (tensors de zeros) perquè la ruta de les imatges en el dataloader era incorrecta. Un cop corregida la importació del dataset i verificat que les imatges es carregaven correctament, el model ja mostrava valors de mètriques no trivials.
+En les primeres execucions, les mètriques R@1 i R@10 sortien sempre valors aproximadament 0. Després d'una anàlisi exhaustiva del pipeline, vam detectar que el problema no era l'arquitectura sinó la **càrrega del dataset**: les imatges s'estaven llegint com a imatges negres (tensors de zeros) perquè la ruta de les imatges en el dataloader era incorrecta. Un cop corregida la importació del dataset i verificat que les imatges es carregaven correctament, el model ja mostrava valors de mètriques no trivials.
 
 Amb el bug de les imatges resolt, vam confirmar que la CrossEntropyLoss no era adequada per a una tasca de retrieval (és una pèrdua de classificació, no de similitud).
 
@@ -51,7 +51,7 @@ Un problema que vam identificar en aquesta fase és que el dataset era molt gran
 
 Basant-nos en els resultats anteriors i les recomanacions del professor Carles, vam implementar un conjunt de millores simultànies:
 
-- **BERT → SentenceBERT** (`all-MiniLM-L6-v2`): genera embeddings de frase optimitzats per a similitud semàntica via mean pooling, molt més adequats que el token `[CLS]` de BERT per a descripcions narratives.
+- **BERT → SentenceBERT**: genera embeddings de frase optimitzats per a similitud semàntica via mean pooling, molt més adequats que el token `[CLS]` de BERT per a descripcions narratives.
 - **ResNet18 → ResNet50**: 2048 features de sortida en lloc de 512, molt més expressiu visualment.
 - **MultiSimilarityLoss → TripletMarginLoss**: treballa amb tripletes (àncora, positiu, negatiu) i imposa explícitament un marge entre distàncies. Amb batches grans, la mineria automàtica de negatius semi-difícils proporciona gradients molt informatius.
 - **Descongelació parcial**: es descongelaven SentenceBERT des de la layer 5 i ResNet50 des de layer4, permetent fine-tuning sense oblit catastròfic.
